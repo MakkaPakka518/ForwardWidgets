@@ -1,12 +1,12 @@
 WidgetMetadata = {
-    id: "ultimate_media_hub",
-    title: "全球影视-分流聚合",
+    id: "ultimate_media_hub_lite",
+    title: "全球影视 & 分流聚合",
     author: "MakkaPakka",
-    description: "集大成之作：Trakt全球榜 + 豆瓣全网榜 + 腾讯/爱奇艺分流片库。",
-    version: "1.0.5",
+    description: "集大成之作：Trakt全球榜 + 豆瓣高分榜 + 平台分流片库。",
+    version: "1.1.5",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
-
+    
     // 1. 全局参数
     globalParams: [
         {
@@ -24,10 +24,9 @@ WidgetMetadata = {
             value: ""
         }
     ],
-
     modules: [
         // ===========================================
-        // 模块 1: 趋势榜单 (Trakt + 豆瓣 + 动漫)
+        // 模块 1: 趋势榜单 (移除失效的国漫选项)
         // ===========================================
         {
             title: "🔥 全球热榜聚合",
@@ -54,14 +53,13 @@ WidgetMetadata = {
                         { title: "📺 B站 - 番剧热播 (日漫)", value: "bili_bgm" },
                         { title: "📺 B站 - 国创热播 (国漫)", value: "bili_cn" },
                         { title: "🌸 Bangumi - 每日放送", value: "bgm_daily" },
-                        { title: "🐉 全网国漫 (豆瓣源)", value: "db_anime_cn" },
-                        { title: "🗾 全网日漫 (豆瓣源)", value: "db_anime_jp" }
+                        // ❌ 已删除：豆瓣国漫/日漫 (因数据不稳定)
                     ]
                 },
-                // 仅对 Trakt 有效的辅助参数
+                // Trakt 辅助参数
                 {
                     name: "traktType",
-                    title: "Trakt 类型 (仅Trakt有效)",
+                    title: "Trakt 类型",
                     type: "enumeration",
                     value: "shows",
                     belongTo: {
@@ -75,9 +73,8 @@ WidgetMetadata = {
                 }
             ]
         },
-
         // ===========================================
-        // 模块 2: 平台分流 (基于 TMDB Network)
+        // 模块 2: 平台分流 (优化电影逻辑)
         // ===========================================
         {
             title: "📺 平台分流片库",
@@ -89,7 +86,7 @@ WidgetMetadata = {
                     name: "platformId",
                     title: "播出平台",
                     type: "enumeration",
-                    value: "2007", // Tencent
+                    value: "2007",
                     enumOptions: [
                         { title: "腾讯视频 (Tencent)", value: "2007" },
                         { title: "爱奇艺 (iQIYI)", value: "1330" },
@@ -108,10 +105,11 @@ WidgetMetadata = {
                     type: "enumeration",
                     value: "tv_drama",
                     enumOptions: [
-                        { title: "📺 电视剧 (排除综/漫)", value: "tv_drama" },
+                        { title: "📺 电视剧 (排除综艺)", value: "tv_drama" },
                         { title: "🎤 综艺 (Reality/Talk)", value: "tv_variety" },
                         { title: "🐲 动漫 (Animation)", value: "tv_anime" },
-                        { title: "🎬 电影 (Movies)", value: "movie" }
+                        // 电影选项逻辑修改：在代码层过滤，这里保留选项但加标注
+                        { title: "🎬 电影 (仅限国外平台)", value: "movie" } 
                     ]
                 },
                 {
@@ -131,42 +129,32 @@ WidgetMetadata = {
 };
 
 // =========================================================================
-// 核心逻辑 1: 趋势榜单聚合 (Trend Hub)
+// 核心逻辑 1: 趋势榜单聚合
 // =========================================================================
-
 const DEFAULT_TRAKT_ID = "003666572e92c4331002a28114387693994e43f5454659f81640a232f08a5996";
 
 async function loadTrendHub(params = {}) {
     const { apiKey, source, traktType = "shows" } = params;
     const traktClientId = params.traktClientId || DEFAULT_TRAKT_ID;
-
     if (!apiKey) return [{ id: "err", type: "text", title: "请填写 TMDB API Key" }];
 
     // --- A. Trakt ---
     if (source.startsWith("trakt_")) {
-        const listType = source.replace("trakt_", ""); // trending, popular...
+        const listType = source.replace("trakt_", ""); 
         const traktData = await fetchTraktData(traktType, listType, traktClientId);
         
-        // 降级：如果 Trakt 挂了，用 TMDB 模拟
-        if (!traktData || traktData.length === 0) {
-            return await fetchTmdbFallback(traktType, listType, apiKey);
-        }
+        if (!traktData || traktData.length === 0) return await fetchTmdbFallback(traktType, apiKey);
 
-        // 处理 Trakt 数据
         const promises = traktData.slice(0, 15).map(async (item, index) => {
             let subject = item.show || item.movie || item;
-            let stats = "";
-            if (listType === "trending") stats = `🔥 ${item.watchers || 0} 人在看`;
-            else if (listType === "anticipated") stats = `❤️ ${item.list_count || 0} 人想看`;
-            else stats = `No. ${index + 1}`;
-
+            let stats = listType === "trending" ? `🔥 ${item.watchers || 0} 人在看` : (listType === "anticipated" ? `❤️ ${item.list_count || 0} 人想看` : `No. ${index + 1}`);
             if (!subject || !subject.ids || !subject.ids.tmdb) return null;
             return await fetchTmdbDetail(subject.ids.tmdb, traktType === "shows" ? "tv" : "movie", apiKey, stats, subject.title);
         });
         return (await Promise.all(promises)).filter(Boolean);
     }
 
-    // --- B. Douban (影视/动漫全网) ---
+    // --- B. Douban ---
     if (source.startsWith("db_")) {
         let tag = "热门";
         let type = "tv";
@@ -174,110 +162,74 @@ async function loadTrendHub(params = {}) {
         else if (source === "db_variety") { tag = "综艺"; type = "tv"; }
         else if (source === "db_movie") { tag = "热门"; type = "movie"; }
         else if (source === "db_tv_us") { tag = "美剧"; type = "tv"; }
-        else if (source === "db_anime_cn") { tag = "国产动画"; type = "tv"; }
-        else if (source === "db_anime_jp") { tag = "日本动画"; type = "tv"; }
-
         return await fetchDoubanAndMap(tag, type, apiKey);
     }
 
     // --- C. Bilibili / Bangumi ---
     if (source.startsWith("bili_")) {
-        const type = source === "bili_cn" ? 4 : 1; // 4=国创, 1=番剧
+        const type = source === "bili_cn" ? 4 : 1; 
         return await fetchBilibiliRank(type, apiKey);
     }
-    if (source === "bgm_daily") {
-        return await fetchBangumiDaily(apiKey);
-    }
+    if (source === "bgm_daily") return await fetchBangumiDaily(apiKey);
 }
 
 // =========================================================================
-// 核心逻辑 2: 平台分流矩阵 (Platform Matrix)
+// 核心逻辑 2: 平台分流矩阵 (修复电影无数据问题)
 // =========================================================================
-
 async function loadPlatformMatrix(params = {}) {
     const { apiKey, platformId, category = "tv_drama", sort = "popularity.desc" } = params;
     if (!apiKey) return [{ id: "err", type: "text", title: "请填写 API Key" }];
 
-    // --- 1. TV 模式 (Drama/Variety/Anime) ---
-    // 利用 with_networks 筛选首播平台
+    // 关键修正：如果选了国内平台 + 电影，直接返回提示，不再请求空数据
+    const foreignPlatforms = ["213", "2739", "49", "2552"]; // Netflix, Disney+, HBO, AppleTV
+    if (category === "movie" && !foreignPlatforms.includes(platformId)) {
+        return [{ 
+            id: "empty_cn_movie", 
+            type: "text", 
+            title: "暂不支持国内平台电影", 
+            description: "TMDB 对国内平台电影源支持不佳，请切换为剧集或国外平台" 
+        }];
+    }
+
+    // --- 1. TV 模式 ---
     if (category.startsWith("tv_")) {
-        let url = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&language=zh-CN&sort_by=${sort}&page=1&include_adult=false&include_null_first_air_dates=false`;
+        let url = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&language=zh-CN&sort_by=${sort}&page=1&include_adult=false&include_null_first_air_dates=false&with_networks=${platformId}`;
         
-        url += `&with_networks=${platformId}`;
-
-        // 细分类型逻辑
-        if (category === "tv_anime") {
-            url += `&with_genres=16`; // 必须含动画
-        } else if (category === "tv_variety") {
-            url += `&with_genres=10764|10767`; // 必须含真人秀或脱口秀
-        } else if (category === "tv_drama") {
-            url += `&without_genres=16,10764,10767`; // 排除动画、综艺，只剩剧
-        }
-
-        return await fetchTmdbDiscover(url, "tv", platformId);
+        if (category === "tv_anime") url += `&with_genres=16`;
+        else if (category === "tv_variety") url += `&with_genres=10764|10767`;
+        else if (category === "tv_drama") url += `&without_genres=16,10764,10767`;
+        
+        return await fetchTmdbDiscover(url, "tv");
     } 
     
-    // --- 2. Movie 模式 ---
-    // 利用 watch_providers 筛选流媒体 (因为电影不属于 Network)
+    // --- 2. Movie 模式 (仅限国外平台) ---
     else if (category === "movie") {
-        // 映射 Network ID -> Provider ID (CN Region)
-        const providerMap = {
-            "2007": "337",  // Tencent
-            "1330": "436",  // iQIYI
-            "1419": "430",  // Youku
-            "1631": "384",  // Mango
-            "1605": "336",  // Bilibili
-            "213": "8",     // Netflix
-            "2739": "337",  // Disney+ (CN无服务，fallback到337或忽略) -> 修正:  Disney+ provider is 337 globally but region restricted.
-            // 简单处理：如果是国外平台，切换 region 为 US
-        };
+        const usMap = { "213":"8", "2739":"337", "49":"1899|15", "2552":"350" };
+        const pid = usMap[platformId];
         
-        let region = "CN";
-        let pid = providerMap[platformId];
-        
-        // 特殊处理国外平台
-        if (["213", "2739", "49", "2552"].includes(platformId)) {
-            region = "US";
-            const usMap = { "213":"8", "2739":"337", "49":"1899", "2552":"350" };
-            pid = usMap[platformId];
-        }
-
-        if (!pid) return [{ id: "empty", type: "text", title: "该平台电影数据暂缺" }];
-
-        let url = `https://api.themoviedb.org/3/discover/movie?api_key=${apiKey}&language=zh-CN&sort_by=${sort}&page=1&include_adult=false&watch_region=${region}&with_watch_providers=${pid}`;
-        
-        return await fetchTmdbDiscover(url, "movie", platformId);
+        let url = `https://api.themoviedb.org/3/discover/movie?api_key=${apiKey}&language=zh-CN&sort_by=${sort}&page=1&include_adult=false&watch_region=US&with_watch_providers=${pid}`;
+        return await fetchTmdbDiscover(url, "movie");
     }
 }
 
 // =========================================================================
-// 通用数据获取与处理 (Helpers)
+// Helpers (保持原样，优化空值处理)
 // =========================================================================
-
-// 1. TMDB Discover 通用抓取
-async function fetchTmdbDiscover(url, mediaType, platformId) {
+async function fetchTmdbDiscover(url, mediaType) {
     try {
         const res = await Widget.http.get(url);
         const data = res.data || {};
         if (!data.results || data.results.length === 0) return [{ id: "empty", type: "text", title: "暂无数据" }];
-
         return data.results.map(item => ({
-            id: String(item.id),
-            tmdbId: parseInt(item.id),
-            type: "tmdb",
-            mediaType: mediaType,
-            title: item.name || item.title,
-            subTitle: `⭐ ${item.vote_average.toFixed(1)}`,
-            description: item.overview,
-            posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
+            id: String(item.id), tmdbId: parseInt(item.id), type: "tmdb", mediaType: mediaType,
+            title: item.name || item.title, subTitle: `⭐ ${item.vote_average?.toFixed(1) || '0.0'}`,
+            description: item.overview, posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
             backdropPath: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : "",
-            year: (item.first_air_date || item.release_date || "").substring(0, 4),
-            rating: item.vote_average.toFixed(1)
+            year: (item.first_air_date || item.release_date || "").substring(0, 4), rating: item.vote_average?.toFixed(1)
         }));
     } catch (e) { return [{ id: "err", type: "text", title: "加载失败" }]; }
 }
 
-// 2. Trakt 抓取
 async function fetchTraktData(type, list, id) {
     try {
         const res = await Widget.http.get(`https://api.trakt.tv/${type}/${list}?limit=15`, {
@@ -287,7 +239,6 @@ async function fetchTraktData(type, list, id) {
     } catch (e) { return []; }
 }
 
-// 3. 豆瓣抓取
 async function fetchDoubanAndMap(tag, type, apiKey) {
     try {
         const res = await Widget.http.get(`https://movie.douban.com/j/search_subjects?type=${type}&tag=${encodeURIComponent(tag)}&sort=recommend&page_limit=20&page_start=0`, {
@@ -295,12 +246,9 @@ async function fetchDoubanAndMap(tag, type, apiKey) {
         });
         const list = (res.data || {}).subjects || [];
         if (list.length === 0) return [{ id: "empty", type: "text", title: "豆瓣暂无数据" }];
-
+        
         const promises = list.map(async (item, i) => {
-            let finalItem = {
-                id: `db_${item.id}`, type: "tmdb", mediaType: type,
-                title: `${i+1}. ${item.title}`, subTitle: `豆瓣 ${item.rate}`, posterPath: item.cover
-            };
+            let finalItem = { id: `db_${item.id}`, type: "tmdb", mediaType: type, title: `${i+1}. ${item.title}`, subTitle: `豆瓣 ${item.rate}`, posterPath: item.cover };
             const tmdb = await searchTmdb(item.title, type, apiKey);
             if (tmdb) mergeTmdb(finalItem, tmdb);
             return finalItem;
@@ -309,18 +257,14 @@ async function fetchDoubanAndMap(tag, type, apiKey) {
     } catch (e) { return [{ id: "err", type: "text", title: "豆瓣连接失败" }]; }
 }
 
-// 4. Bilibili 抓取
 async function fetchBilibiliRank(type, apiKey) {
     try {
         const res = await Widget.http.get(`https://api.bilibili.com/pgc/web/rank/list?day=3&season_type=${type}`);
         const list = (res.data?.result?.list || res.data?.data?.list || []).slice(0, 15);
         if (list.length === 0) return [{ id: "empty", type: "text", title: "B站无数据" }];
-
+        
         const promises = list.map(async (item, i) => {
-            let finalItem = {
-                id: `bili_${i}`, type: "tmdb", mediaType: "tv",
-                title: `${i+1}. ${item.title}`, subTitle: item.new_ep?.index_show, posterPath: item.cover
-            };
+            let finalItem = { id: `bili_${i}`, type: "tmdb", mediaType: "tv", title: `${i+1}. ${item.title}`, subTitle: item.new_ep?.index_show, posterPath: item.cover };
             const tmdb = await searchTmdb(item.title, "tv", apiKey);
             if (tmdb) mergeTmdb(finalItem, tmdb);
             return finalItem;
@@ -329,7 +273,6 @@ async function fetchBilibiliRank(type, apiKey) {
     } catch (e) { return [{ id: "err", type: "text", title: "B站连接失败" }]; }
 }
 
-// 5. Bangumi 抓取
 async function fetchBangumiDaily(apiKey) {
     try {
         const res = await Widget.http.get("https://api.bgm.tv/calendar");
@@ -339,10 +282,7 @@ async function fetchBangumiDaily(apiKey) {
         
         const promises = items.map(async item => {
             const name = item.name_cn || item.name;
-            let finalItem = {
-                id: `bgm_${item.id}`, type: "tmdb", mediaType: "tv",
-                title: name, subTitle: item.name, posterPath: item.images?.large
-            };
+            let finalItem = { id: `bgm_${item.id}`, type: "tmdb", mediaType: "tv", title: name, subTitle: item.name, posterPath: item.images?.large };
             const tmdb = await searchTmdb(name, "tv", apiKey);
             if (tmdb) mergeTmdb(finalItem, tmdb);
             return finalItem;
@@ -351,7 +291,6 @@ async function fetchBangumiDaily(apiKey) {
     } catch (e) { return []; }
 }
 
-// 通用工具
 async function searchTmdb(query, type, key) {
     const q = query.replace(/第[一二三四五六七八九十\d]+[季章]/g, "").trim();
     try {
@@ -367,10 +306,9 @@ function mergeTmdb(target, source) {
     target.backdropPath = source.backdrop_path ? `https://image.tmdb.org/t/p/w780${source.backdrop_path}` : "";
     target.year = (source.first_air_date || source.release_date || "").substring(0, 4);
     target.description = source.overview;
-    target.rating = source.vote_average.toFixed(1);
+    target.rating = source.vote_average?.toFixed(1);
 }
 
-// TMDB 详情获取 (给 Trakt 用)
 async function fetchTmdbDetail(id, type, key, stats, title) {
     try {
         const r = await Widget.http.get(`https://api.themoviedb.org/3/${type}/${id}?api_key=${key}&language=zh-CN`);
@@ -385,8 +323,7 @@ async function fetchTmdbDetail(id, type, key, stats, title) {
     } catch (e) { return null; }
 }
 
-async function fetchTmdbFallback(traktType, listType, apiKey) {
-    // 简化版降级逻辑
+async function fetchTmdbFallback(traktType, apiKey) {
     const type = traktType === "shows" ? "tv" : "movie";
     const url = `https://api.themoviedb.org/3/trending/${type}/day?api_key=${apiKey}&language=zh-CN`;
     try {
@@ -397,4 +334,4 @@ async function fetchTmdbFallback(traktType, listType, apiKey) {
             posterPath: d.poster_path ? `https://image.tmdb.org/t/p/w500${d.poster_path}` : ""
         }));
     } catch(e) { return []; }
-                                 }
+}
