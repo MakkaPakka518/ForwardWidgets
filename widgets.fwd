@@ -8,7 +8,7 @@
       "title": "全球追剧日历",
       "description": "根据TMDB日期生成追剧日历",
       "requiredVersion": "0.0.1",
-      "version": "2.2.0",
+      "version": "2.2.5",
       "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
       "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/zhuijurili.js"
     },
