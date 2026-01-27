@@ -1,7 +1,7 @@
 {
   "title": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖'𝙨 𝙒𝙞𝙙𝙜𝙚𝙩𝙨",
   "description": "汇聚追剧日历,流媒体top10,烂番茄好评榜，弹幕api-pro等追剧模块",
-  "icon": "https://github.com/MakkaPakka518/ForwardWidgets/raw/main/MakkaPakka-Forward.png",
+  "icon": "https://github.com/MakkaPakka518/ForwardWidgets/raw/main/mkbkforward.png",
   "widgets": [
     {
       "id": "tv.calendar.strict",
