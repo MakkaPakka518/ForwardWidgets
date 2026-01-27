@@ -1,7 +1,7 @@
 WidgetMetadata = {
-    id: "gemini.rottentomatoes.fix.ui",
+    id: "rottentomatoes",
     title: "烂番茄口碑榜",
-    author: "Makka Pakka",
+    author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "抓取 烂番茄 新鲜认证(>75%)榜单",
     version: "2.2.1",
     requiredVersion: "0.0.1",
