@@ -71,7 +71,7 @@
       "title": "国外流媒体 TOP10 榜单",
       "description": "抓取 Netflix/HBO等平台 官方榜单",
       "requiredVersion": "0.0.1",
-      "version": "2.1.0",
+      "version": "1.0.7",
       "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
       "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/top10.js"
     },
