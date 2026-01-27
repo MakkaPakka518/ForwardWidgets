@@ -1,17 +1,17 @@
 WidgetMetadata = {
-  id: "gemini.platform.originals.final.v3",
-  title: "流媒体·独家原创 (信息增强)",
+  id: "gemini.platform.originals.ui.fix",
+  title: "流媒体·独家原创 (UI修复)",
   author: "Gemini",
-  description: "Netflix/HBO/腾讯/B站 自制内容，副标题显示日期与类型",
-  version: "3.1.0",
+  description: "Netflix/HBO/腾讯/B站 自制内容，UI 样式与影视榜单一致",
+  version: "4.0.0",
   requiredVersion: "0.0.1",
-  // 1. 全局参数 (Global Params)
+  // 1. 全局参数 (Global)
   globalParams: [
     {
       name: "apiKey",
       title: "TMDB API Key (必填)",
       type: "input",
-      description: "用于获取数据。请在 themoviedb.org 申请。",
+      description: "用于获取数据",
       value: ""
     }
   ],
@@ -90,7 +90,7 @@ async function loadPlatformOriginals(params = {}) {
     return [{
       id: "err_no_key",
       title: "❌ 未配置 API Key",
-      subTitle: "请在组件全局设置中填写 Key",
+      genreTitle: "请在全局设置中填写",
       type: "text"
     }];
   }
@@ -99,6 +99,7 @@ async function loadPlatformOriginals(params = {}) {
   const genreId = params.genre || "";
   const sortBy = params.sortBy || "popularity.desc";
 
+  // 构建 URL
   let url = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&language=zh-CN&include_adult=false&include_null_first_air_dates=false&page=1`;
   url += `&with_networks=${networkId}&sort_by=${sortBy}`;
   
@@ -110,48 +111,57 @@ async function loadPlatformOriginals(params = {}) {
     const data = res.data || res;
 
     if (!data.results || data.results.length === 0) {
-      return [{ id: "empty", title: "该分类下无数据", type: "text" }];
+      return [{ id: "empty", title: "无数据", type: "text" }];
     }
 
     return data.results.map(item => {
-        // 1. 获取类型文本 (最多显示2个，用 / 分隔)
-        const genreText = (item.genre_ids || [])
+        // 1. 类型处理
+        const genreNames = (item.genre_ids || [])
             .map(id => GENRE_MAP[id])
             .filter(Boolean)
-            .slice(0, 2) 
-            .join("/");
+            .slice(0, 3)
+            .join(" / ");
         
-        // 2. 获取日期
-        const date = item.first_air_date || "待定";
+        // 2. 日期处理
+        const date = item.first_air_date || "";
         const year = date.substring(0, 4);
         
-        // 3. 组合副标题: [日期] • [类型]
-        // 例如: "2024-03-21 • 科幻奇幻/剧情"
-        const subTitleInfo = [date, genreText].filter(Boolean).join(" • ");
+        // 3. 评分处理
+        const score = item.vote_average ? item.vote_average.toFixed(1) : "0.0";
 
         return {
+            // 核心字段
             id: String(item.id),
             tmdbId: parseInt(item.id),
             type: "tmdb",
             mediaType: "tv",
             
+            // --- UI 映射关键点 ---
+            
+            // 第一行：标题
             title: item.name || item.original_name,
             
-            // 【关键修改】副标题显示：日期和类型
-            subTitle: subTitleInfo,
+            // 第二行：年份 • 类型 (对应图01的效果)
+            // 这里的 genreTitle 字段会被 App 自动渲染在标题下方
+            genreTitle: [year, genreNames].filter(Boolean).join(" • "),
             
+            // 第三行：评分或其他信息
+            subTitle: `TMDB ${score}`,
+            
+            // 底部：简介
+            description: item.overview || "暂无简介",
+            
+            // 图片
             posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
             backdropPath: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : "",
             
-            rating: item.vote_average ? item.vote_average.toFixed(1) : "0.0",
-            year: year,
-            
-            // 简介：显示评分 + 剧情
-            description: `⭐ ${item.vote_average.toFixed(1)} | ${item.overview || "暂无简介"}`
+            // 辅助数据
+            rating: score,
+            year: year
         };
     });
 
   } catch (e) {
-    return [{ id: "err_net", title: "网络错误", subTitle: e.message, type: "text" }];
+    return [{ id: "err_net", title: "网络错误", description: e.message, type: "text" }];
   }
 }
