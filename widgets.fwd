@@ -31,6 +31,24 @@
       "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/todaywatch.js"
     },
     {
+      "id": "today history",
+      "title": "那年今日",
+      "description": "历史上的今天上映了哪些电影?",
+      "requiredVersion": "0.0.1",
+      "version": "1.2.0",
+      "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+      "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/todayhistory.js"
+    },
+    {
+      "id": "movie.collection",
+      "title": "系列合集",
+      "description": "一键获取 哈利波特，漫威等等剧集系列，或者手动搜索的电影系列",
+      "requiredVersion": "0.0.1",
+      "version": "1.1.0",
+      "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+      "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/xilieheji.js"
+    },
+    {
       "id": "flixpatrol.strict",
       "title": "国外流媒体 TOP10 榜单",
       "description": "抓取 Netflix/HBO等平台 官方榜单",
