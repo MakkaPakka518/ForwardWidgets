@@ -12,6 +12,15 @@
       "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
       "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/zhuijurili.js"
     },
+    {
+      "id": "forward.danmu.pro.online_dict",
+      "title": "多源弹幕",
+      "description": "支持添加多条api并自命名&繁简互转",
+      "requiredVersion": "0.0.1",
+      "version": "1.0.7",
+      "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+      "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/danmuapi-Pro.js"
+    },
     {    
       "id": "rottentomatoes",
       "title": "烂番茄口碑榜",
