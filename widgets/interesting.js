@@ -3,11 +3,11 @@ WidgetMetadata = {
     title: "设定控 | 趣味流派",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "拒绝无聊分类！探索 赛博朋克/时空循环/克苏鲁/大逃杀 等特殊设定影视。",
-    version: "1.0.0",
+    version: "1.0.1",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
 
-    // 全局参数
+    // 1. 全局参数
     globalParams: [
         {
             name: "apiKey",
@@ -17,22 +17,21 @@ WidgetMetadata = {
             value: ""
         }
     ],
-
     modules: [
         {
             title: "探索流派",
             functionName: "loadNicheGenre",
-            type: "video",
+            type: "list", // 推荐使用 list
             cacheDuration: 3600,
             params: [
                 {
                     name: "themeId",
                     title: "选择感兴趣的设定",
                     type: "enumeration",
-                    value: "12190", // 默认赛博朋克
+                    value: "12190", 
                     enumOptions: [
                         { title: "🤖 赛博朋克 (Cyberpunk)", value: "12190" },
-                        { title: "⏳ 时空循环 (Time Loop)", value: "4366|193382" }, // 组合关键词
+                        { title: "⏳ 时空循环 (Time Loop)", value: "4366|193382" },
                         { title: "🧟 丧尸围城 (Zombie)", value: "12377" },
                         { title: "🚀 太空歌剧 (Space Opera)", value: "3737" },
                         { title: "🔪 大逃杀/吃鸡 (Battle Royale)", value: "10565|263628" },
@@ -72,24 +71,24 @@ WidgetMetadata = {
     ]
 };
 
+// TMDB 全量类型映射 (电影+剧集)
+const GENRE_MAP = {
+    28: "动作", 12: "冒险", 16: "动画", 35: "喜剧", 80: "犯罪", 99: "纪录片",
+    18: "剧情", 10751: "家庭", 14: "奇幻", 36: "历史", 27: "恐怖", 10402: "音乐",
+    9648: "悬疑", 10749: "爱情", 878: "科幻", 10770: "电视电影", 53: "惊悚",
+    10752: "战争", 37: "西部", 10759: "动作冒险", 10762: "儿童", 10763: "新闻",
+    10764: "真人秀", 10765: "科幻奇幻", 10766: "肥皂剧", 10767: "脱口秀", 10768: "战争政治"
+};
+
 async function loadNicheGenre(params = {}) {
     const { apiKey, themeId, mediaType = "movie", sort = "popularity.desc" } = params;
 
     if (!apiKey) {
-        return [{
-            id: "err_key",
-            type: "text",
-            title: "配置缺失",
-            subTitle: "请在设置中填入 TMDB API Key"
-        }];
+        return [{ id: "err_key", type: "text", title: "配置缺失", subTitle: "请在全局设置中填入 Key" }];
     }
 
-    // 1. 构造 Discover 链接
-    // with_keywords: 核心参数，筛选特定 ID
-    // vote_count.gte: 过滤掉没人看过的烂片
     let url = `https://api.themoviedb.org/3/discover/${mediaType}?api_key=${apiKey}&language=zh-CN&sort_by=${sort}&include_adult=false&include_video=false&page=1&with_keywords=${themeId}&vote_count.gte=50`;
 
-    // 如果是按评分排序，增加投票人数门槛，防止只有1个人评10分的情况
     if (sort === "vote_average.desc") {
         url += "&vote_count.gte=300";
     }
@@ -101,12 +100,7 @@ async function loadNicheGenre(params = {}) {
         const data = res.data || res;
         
         if (!data.results || data.results.length === 0) {
-            return [{
-                id: "empty",
-                type: "text",
-                title: "暂无数据",
-                subTitle: "该分类下暂无内容"
-            }];
+            return [{ id: "empty", type: "text", title: "暂无数据", subTitle: "该分类下暂无内容" }];
         }
 
         // 2. 映射数据
@@ -114,9 +108,14 @@ async function loadNicheGenre(params = {}) {
             const title = item.title || item.name;
             const originalName = item.original_title || item.original_name;
             const year = (item.release_date || item.first_air_date || "").substring(0, 4);
-            
-            // 动态副标题：显示评分和年份
-            const subTitle = `${year} · ⭐️ ${item.vote_average ? item.vote_average.toFixed(1) : "0.0"}`;
+            const score = item.vote_average ? item.vote_average.toFixed(1) : "0.0";
+
+            // 构造类型字符串
+            const genreNames = (item.genre_ids || [])
+                .map(id => GENRE_MAP[id])
+                .filter(Boolean)
+                .slice(0, 3)
+                .join(" / ");
 
             return {
                 id: String(item.id),
@@ -125,23 +124,24 @@ async function loadNicheGenre(params = {}) {
                 mediaType: mediaType,
                 
                 title: title,
-                subTitle: subTitle,
+                
+                // 【核心增强】年份 • 类型
+                genreTitle: [year, genreNames].filter(Boolean).join(" • "),
+                
+                // 副标题：评分
+                subTitle: `TMDB ${score}`,
+                
                 description: item.overview || `原名: ${originalName}`,
                 
                 posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
                 backdropPath: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : "",
                 
-                rating: item.vote_average ? item.vote_average.toFixed(1) : "0.0",
+                rating: score,
                 year: year
             };
         });
 
     } catch (e) {
-        return [{
-            id: "err_net",
-            type: "text",
-            title: "网络错误",
-            subTitle: e.message
-        }];
+        return [{ id: "err_net", type: "text", title: "网络错误", subTitle: e.message }];
     }
 }
