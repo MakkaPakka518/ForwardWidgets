@@ -1,6 +1,6 @@
 WidgetMetadata = {
     id: "history_today_pro",
-    title: "那年今日 (Pro)",
+    title: "那年今日",
     author: "MakkaPakka",
     description: "自动根据当前日期，探索过去 50 年同日上映的经典电影。",
     version: "2.1.1",
