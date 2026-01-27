@@ -1,10 +1,10 @@
 WidgetMetadata = {
   id: "forward.danmu.pro.online_dict",
-  title: "多源弹幕 (在线字典版)",
-  version: "7.0.0",
+  title: "多源弹幕",
+  version: "1.0.7",
   requiredVersion: "0.0.2",
-  description: "自动下载完整简繁字典，支持3源切换与分段加载，转换覆盖率100%",
-  author: "Gemini Remix",
+  description: "支持添加多条api并自命名&繁简互转",
+  author: "MakkaPakka",
   site: "https://github.com/huangxd-/ForwardWidgets",
   globalParams: [
     // --- 源 1 (主源) ---
