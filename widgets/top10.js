@@ -1,6 +1,6 @@
 WidgetMetadata = {
     id: "flixpatrol.strict",
-    title: "国外流媒体 TOP10榜单",
+    title: "国外流媒体 TOP10 榜单",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "抓取 Netflix/HBO等平台 官方榜单",
     version: "2.1.0",
