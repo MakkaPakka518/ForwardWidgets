@@ -1,9 +1,9 @@
 WidgetMetadata = {
-    id: "ultimate_media_hub_lite",
+    id: "ultimate_media_hub_pro_ui",
     title: "全球影视 & 分流聚合",
     author: "MakkaPakka",
-    description: "集大成之作：Trakt全球榜 + 豆瓣高分榜 + 平台分流片库。",
-    version: "1.2.6",
+    description: "集大成之作：Trakt/豆瓣/平台分流，全线支持【年份•类型】展示。",
+    version: "5.2.0",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
     
