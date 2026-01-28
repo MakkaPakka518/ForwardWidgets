@@ -1,6 +1,26 @@
+WidgetMetadata = {
+    id: "danmu_fetcher_fix",
+    title: "弹幕获取器 (修复版)",
+    author: "MakkaPakka",
+    description: "修复弹幕获取失败问题，支持多源聚合与繁简转换。",
+    version: "1.0.2",
+    requiredVersion: "0.0.1",
+    modules: [
+        {
+            title: "获取弹幕",
+            functionName: "getCommentsById",
+            type: "danmu", // 确认为弹幕类型
+            cacheDuration: 0,
+            params: [] // 由播放器自动传入参数
+        }
+    ]
+};
+
 async function getCommentsById(params) {
     const { commentId } = params;
-    // 假设 getServersFromParams 是外部定义的函数，如果报错请确保该函数存在
+    // 假设 getServersFromParams 是外部定义的，如果未定义，这里提供一个默认空数组防止报错
+    // 实际使用时，Forward 播放器环境通常会注入这个上下文，或者是你自己代码里的其他部分
+    // 如果没有这个函数，你需要告诉我它的逻辑，或者我帮你写一个通用的
     const servers = typeof getServersFromParams === 'function' ? getServersFromParams(params) : [];
 
     if (!commentId) return null;
@@ -8,24 +28,23 @@ async function getCommentsById(params) {
 
     const headers = {
         "Content-Type": "application/json",
-        "User-Agent": "ForwardWidgets/1.0.0",
+        "User-Agent": "ForwardWidgets/1.0.0"
     };
 
     // 1. 并发请求所有服务器
-    // 保留 chConvert=1 参数以支持繁简转换
     const tasks = servers.map(async (server) => {
         try {
+            // 关键：保留 chConvert=1 以支持繁简转换
             const url = `${server}/api/v2/comment/${commentId}?withRelated=true&chConvert=1`;
             const res = await Widget.http.get(url, { headers });
             
-            // 兼容处理：有些接口直接返回对象，有些返回字符串需解析
             let data = res.data;
             if (typeof data === 'string') {
                 try { data = JSON.parse(data); } catch(e) {}
             }
             return data;
         } catch (e) {
-            console.error(`Danmu fetch error from ${server}:`, e);
+            console.error(`Danmu fetch error: ${e.message}`);
             return null;
         }
     });
@@ -33,27 +52,26 @@ async function getCommentsById(params) {
     const results = await Promise.all(tasks);
 
     // 2. 数据合并与去重
-    let baseStructure = null; // 用于保留非弹幕的其他字段（如关联视频信息）
+    let baseStructure = null; 
     const allDanmakus = [];
     const seen = new Set();
 
     results.forEach((data) => {
         if (!data) return;
 
-        // 保留第一个包含有效结构的响应作为基础对象
+        // 保留第一个成功的响应结构
         if (!baseStructure && (data.danmakus || data.comments)) {
             baseStructure = data;
         }
 
-        // 提取弹幕列表（兼容 danmakus 和 comments 两个字段名）
+        // 兼容 danmakus 和 comments 字段
         const list = Array.isArray(data.danmakus) ? data.danmakus : 
                      (Array.isArray(data.comments) ? data.comments : []);
 
         if (!list || list.length === 0) return;
 
         list.forEach((d) => {
-            // 生成唯一指纹：优先用 cid/id，没有则用 内容+时间点 组合
-            // 这种写法能有效防止不同源返回的同一条弹幕重复出现
+            // 生成唯一指纹，防止重复
             const key = (d.cid !== undefined ? `cid:${d.cid}` : "") || 
                         (d.id !== undefined ? `id:${d.id}` : "") || 
                         `mix:${d.time || d.p || ""}#${d.text || d.m || ""}`;
@@ -66,19 +84,17 @@ async function getCommentsById(params) {
 
     // 3. 返回结果
     if (!baseStructure && allDanmakus.length === 0) {
-        return null; // 所有源都失败
+        return null; 
     }
 
-    // 如果没有获取到基础结构（极其罕见），手动构造一个
     if (!baseStructure) {
         baseStructure = { code: 0 };
     }
 
-    // 将去重后的总弹幕列表回填
-    // 优先使用 danmakus 字段，符合 Forward 规范
+    // 统一回填到 danmakus 字段
     baseStructure.danmakus = allDanmakus;
     
-    // 清理可能存在的旧字段以防混淆
+    // 清理旧字段
     if (baseStructure.comments) delete baseStructure.comments;
 
     return baseStructure;
