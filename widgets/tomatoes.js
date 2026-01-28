@@ -29,6 +29,12 @@ WidgetMetadata = {
                         { title: "最新剧集 (TV New)", value: "tv_new" },
                         { title: "最佳流媒体 (Best Streaming)", value: "movies_best" }
                     ]
+                },
+                // 必须显式声明 page 参数
+                {
+                    name: "page",
+                    title: "页码",
+                    type: "page"
                 }
             ]
         }
@@ -53,29 +59,45 @@ const RT_URLS = {
 
 async function loadRottenTomatoes(params = {}) {
     const { listType = "movies_home" } = params;
+    // 获取页码，默认为 1
+    const page = params.page || 1;
+    const pageSize = 15;
 
-    console.log(`[RT] Fetching: ${listType}`);
-    const rtItems = await fetchRottenTomatoesList(listType);
+    console.log(`[RT] Fetching: ${listType}, Page: ${page}`);
+    
+    // 1. 抓取全量列表 (因为是 HTML 抓取，一次性拿所有)
+    const allItems = await fetchRottenTomatoesList(listType);
 
-    if (rtItems.length === 0) {
-        return [{ id: "err_scrape", type: "text", title: "暂无数据", subTitle: "无法连接到烂番茄" }];
+    if (allItems.length === 0) {
+        return page === 1 ? [{ id: "err_scrape", type: "text", title: "暂无数据", subTitle: "无法连接到烂番茄" }] : [];
     }
 
-    const matchPromises = rtItems.slice(0, 15).map((item, index) => 
-        searchTmdb(item, index + 1)
+    // 2. 本地分页逻辑 (Slice)
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    
+    // 如果请求页码超出范围，返回空数组停止加载
+    if (start >= allItems.length) return [];
+
+    const pageItems = allItems.slice(start, end);
+
+    // 3. 并发匹配 TMDB
+    const matchPromises = pageItems.map((item, index) => 
+        searchTmdb(item, start + index + 1)
     );
 
     const results = await Promise.all(matchPromises);
     const finalItems = results.filter(Boolean);
 
-    if (finalItems.length === 0) {
-        return [{ id: "err_match", type: "text", title: "匹配失败", subTitle: "TMDB 搜索无结果" }];
-    }
-
+    // 容错：如果这一页全部匹配失败，尝试返回下一页（或者直接返回空）
+    // 为了体验，这里我们只返回成功的
     return finalItems;
 }
 
+// 抓取逻辑 (增加缓存以避免翻页时重复请求烂番茄)
 async function fetchRottenTomatoesList(type) {
+    // 这里可以加一个简单的内存缓存，但考虑到 Widget 生命周期，每次请求可能都是独立的
+    // Forward 的 cacheDuration 已经帮我们处理了函数级别的缓存，所以这里直接请求即可
     const url = RT_URLS[type] || RT_URLS["movies_home"];
     try {
         const res = await Widget.http.get(url, {
@@ -106,7 +128,7 @@ async function searchTmdb(rtItem, rank) {
     const cleanTitle = rtItem.title.replace(/\s\(\d{4}\)$/, "");
     
     try {
-        // 使用 Widget.tmdb.get 免 Key 搜索
+        // 免 Key 搜索
         const res = await Widget.tmdb.get(`/search/${rtItem.mediaType}`, {
             params: { query: cleanTitle, language: "zh-CN" }
         });
@@ -116,17 +138,17 @@ async function searchTmdb(rtItem, rank) {
         
         const match = data.results[0];
         
-        // 1. 获取类型文本
+        // 1. 类型
         const genreText = (match.genre_ids || [])
             .map(id => GENRE_MAP[id])
             .filter(Boolean)
             .slice(0, 2)
             .join(" / ");
             
-        // 2. 获取年份
+        // 2. 年份
         const year = (match.first_air_date || match.release_date || "").substring(0, 4);
 
-        // 3. 构造副标题 (烂番茄分数)
+        // 3. 烂番茄分数
         let scoreTags = [];
         if (rtItem.tomatoScore) scoreTags.push(`🍅 ${rtItem.tomatoScore}%`);
         if (rtItem.popcornScore) scoreTags.push(`🍿 ${rtItem.popcornScore}%`);
@@ -139,13 +161,8 @@ async function searchTmdb(rtItem, rank) {
             mediaType: rtItem.mediaType,
             
             title: `${rank}. ${match.name || match.title}`,
-            
-            // 【UI 核心】年份 • 类型
             genreTitle: [year, genreText].filter(Boolean).join(" • "),
-            
-            // 【UI 核心】烂番茄分数
             subTitle: subTitle,
-            
             description: match.overview || `原名: ${rtItem.title}`,
             
             posterPath: match.poster_path ? `https://image.tmdb.org/t/p/w500${match.poster_path}` : "",
