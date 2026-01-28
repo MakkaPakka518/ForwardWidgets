@@ -13,6 +13,15 @@
       "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/hebingban/animeone.js"
     },
     {
+      "id": "trakt_personal_mixed",
+      "title": "Trakt 个人中心",
+      "description": "一站式获取 Trakt 待看/收藏/历史。",
+      "requiredVersion": "0.0.1",
+      "version": "1.0.3",
+      "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+      "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/traktlistpro.js"
+    },
+    {
       "id": "western_trends_hub",
       "title": "欧美风向标|口碑与热度",
       "description": "聚合烂番茄(口碑)与流媒体平台(热度)，一站式掌握欧美影视动态。",
