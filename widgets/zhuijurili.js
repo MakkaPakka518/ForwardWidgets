@@ -8,21 +8,14 @@ WidgetMetadata = {
   requiredVersion: "0.0.1",
   site: "https://www.themoviedb.org",
 
-    // 1. 全局参数
-    globalParams: [
-        {
-            name: "apiKey",
-            title: "TMDB API Key (必填)",
-            type: "input",
-            description: "用于获取数据。",
-            value: ""
-        }
-    ],
+    // 0. 全局免 Key
+    globalParams: [],
+
     modules: [
         {
             title: "追剧日历",
             functionName: "loadTvCalendar",
-            type: "list", // 推荐使用 list 类型
+            type: "list",
             cacheDuration: 3600,
             params: [
                 {
@@ -50,6 +43,12 @@ WidgetMetadata = {
                         { title: "中国 (CN)", value: "CN" },
                         { title: "英国 (GB)", value: "GB" }
                     ]
+                },
+                // 支持分页
+                {
+                    name: "page",
+                    title: "页码",
+                    type: "page"
                 }
             ]
         }
@@ -65,33 +64,37 @@ const GENRE_MAP = {
 };
 
 async function loadTvCalendar(params = {}) {
-    const apiKey = params.apiKey;
-    if (!apiKey) {
-        return [{ id: "err_no_key", type: "text", title: "配置缺失", subTitle: "请在设置中填入 TMDB API Key" }];
-    }
+    const { mode = "update_today", region = "Global", page = 1 } = params;
 
-    const mode = params.mode || "update_today";
-    const region = params.region || "Global";
     const dates = calculateDates(mode);
     const isPremiere = mode.includes("premiere");
+    
+    // 构造请求参数
+    const queryParams = {
+        language: "zh-CN",
+        sort_by: "popularity.desc",
+        include_null_first_air_dates: false,
+        page: page,
+        timezone: "Asia/Shanghai"
+    };
+
     const dateField = isPremiere ? "first_air_date" : "air_date";
+    queryParams[`${dateField}.gte`] = dates.start;
+    queryParams[`${dateField}.lte`] = dates.end;
 
-    let url = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&sort_by=popularity.desc&include_null_first_air_dates=false&page=1&timezone=Asia/Shanghai&${dateField}.gte=${dates.start}&${dateField}.lte=${dates.end}`;
-
-    if (region === "Global") {
-        url += `&language=zh-CN`;
-    } else {
-        url += `&language=zh-CN&with_origin_country=${region}`;
+    if (region !== "Global") {
+        queryParams.with_origin_country = region;
         const langMap = { "JP": "ja", "KR": "ko", "CN": "zh", "GB": "en", "US": "en" };
-        if (langMap[region]) url += `&with_original_language=${langMap[region]}`;
+        if (langMap[region]) queryParams.with_original_language = langMap[region];
     }
 
     try {
-        const res = await Widget.http.get(url);
-        const data = res.data || res;
+        // 免 Key 请求
+        const res = await Widget.tmdb.get("/discover/tv", { params: queryParams });
+        const data = res || {};
 
         if (!data.results || data.results.length === 0) {
-            return [{ id: "empty_result", type: "text", title: "暂无更新", subTitle: `${region} 在 ${dates.start} 无数据` }];
+            return page === 1 ? [{ id: "empty", type: "text", title: "暂无更新", subTitle: `${region} 在 ${dates.start} 无数据` }] : [];
         }
 
         return data.results.map(item => {
@@ -109,23 +112,20 @@ async function loadTvCalendar(params = {}) {
                 .slice(0, 2)
                 .join(" / ");
 
-            // 2. 标题逻辑
-            let finalTitle = displayName;
-            
             // 3. 副标题逻辑: 日期 | 原名
             let subInfo = [];
             if (mode !== "update_today" && shortDate) subInfo.push(`📅 ${shortDate}`);
             else if (mode === "update_today") subInfo.push("🆕 今日");
             
             if (originalName && originalName !== displayName) subInfo.push(originalName);
-            
+
             return {
                 id: String(item.id),
                 type: "tmdb",
                 tmdbId: parseInt(item.id),
                 mediaType: "tv",
                 
-                title: finalTitle,
+                title: displayName,
                 
                 // 【UI 核心】年份 • 类型
                 genreTitle: [year, genreText].filter(Boolean).join(" • "),
@@ -145,26 +145,31 @@ async function loadTvCalendar(params = {}) {
         });
 
     } catch (e) {
-        return [{ id: "error_network", type: "text", title: "网络错误", subTitle: e.message }];
+        return [{ id: "error_net", type: "text", title: "网络错误", subTitle: e.message }];
     }
 }
 
 function calculateDates(mode) {
     const today = new Date();
     const toStr = (d) => d.toISOString().split('T')[0];
+
     if (mode === "update_today") return { start: toStr(today), end: toStr(today) };
+
     if (mode === "premiere_tomorrow") {
         const tmr = new Date(today); tmr.setDate(today.getDate() + 1); return { start: toStr(tmr), end: toStr(tmr) };
     }
+
     if (mode === "premiere_week") {
         const start = new Date(today); start.setDate(today.getDate() + 1);
         const end = new Date(today); end.setDate(today.getDate() + 7);
         return { start: toStr(start), end: toStr(end) };
     }
+
     if (mode === "premiere_month") {
         const start = new Date(today); start.setDate(today.getDate() + 1);
         const end = new Date(today); end.setDate(today.getDate() + 30);
         return { start: toStr(start), end: toStr(end) };
     }
+
     return { start: toStr(today), end: toStr(today) };
 }
