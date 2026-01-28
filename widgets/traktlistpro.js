@@ -3,7 +3,7 @@ WidgetMetadata = {
     title: "Trakt 个人中心",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "一站式获取 Trakt 待看/收藏/历史。",
-    version: "1.0.3",
+    version: "1.0.4",
     requiredVersion: "0.0.1",
     site: "https://trakt.tv",
 
