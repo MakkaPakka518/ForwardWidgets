@@ -1,13 +1,12 @@
 WidgetMetadata = {
-    id: "my_trakt_hub",
-    title: "Trakt 个人中心",
+    id: "trakt_personal_ultimate",
+    title: "Trakt 个人中心 (全能版)",
     author: "MakkaPakka",
-    description: "同步你的 Trakt 待看列表 (Watchlist) 和在追剧集 (Progress)。",
-    version: "1.0.0",
+    description: "一站式管理 Trakt 待看、收藏、历史及自定义列表。",
+    version: "2.0.0",
     requiredVersion: "0.0.1",
     site: "https://trakt.tv",
 
-    // 1. 全局参数
     globalParams: [
         {
             name: "traktUser",
@@ -28,28 +27,30 @@ WidgetMetadata = {
     modules: [
         {
             title: "我的片单",
-            functionName: "loadMyTrakt",
+            functionName: "loadTraktProfile",
             type: "list",
-            cacheDuration: 600, // 10分钟刷新一次，保证进度同步
+            cacheDuration: 300, // 5分钟刷新
             params: [
                 {
-                    name: "listType",
-                    title: "列表类型",
+                    name: "section",
+                    title: "浏览区域",
                     type: "enumeration",
                     value: "watchlist",
                     enumOptions: [
-                        { title: "📺 在追剧集 (Next Episode)", value: "progress" },
                         { title: "📜 待看列表 (Watchlist)", value: "watchlist" },
-                        { title: "⭐ 收藏夹 (Collection)", value: "collection" },
-                        { title: "🕒 历史记录 (History)", value: "history" }
+                        { title: "📦 收藏列表 (Collection)", value: "collection" },
+                        { title: "🕒 观看历史 (History)", value: "history" },
+                        { title: "📑 自定义列表 (Lists)", value: "lists" }, // 获取所有自定义列表
+                        { title: "⭐ 评分记录 (Ratings)", value: "ratings" }
                     ]
                 },
+                // 仅对 Watchlist/Collection/History/Ratings 有效
                 {
                     name: "type",
                     title: "内容筛选",
                     type: "enumeration",
                     value: "shows",
-                    belongTo: { paramName: "listType", value: ["watchlist", "collection", "history"] },
+                    belongTo: { paramName: "section", value: ["watchlist", "collection", "history", "ratings"] },
                     enumOptions: [
                         { title: "剧集", value: "shows" },
                         { title: "电影", value: "movies" }
@@ -62,67 +63,47 @@ WidgetMetadata = {
 
 const DEFAULT_TRAKT_ID = "003666572e92c4331002a28114387693994e43f5454659f81640a232f08a5996";
 
-async function loadMyTrakt(params = {}) {
-    const { traktUser, listType = "watchlist", type = "shows" } = params;
+// 核心加载函数
+async function loadTraktProfile(params = {}) {
+    const { traktUser, section, type = "shows" } = params;
     const clientId = params.traktClientId || DEFAULT_TRAKT_ID;
 
     if (!traktUser) return [{ id: "err", type: "text", title: "请填写 Trakt 用户名" }];
 
-    let url = "";
-    
-    // 1. 在追列表 (Progress) - 最复杂的接口
-    // /users/{username}/watched/shows?extended=noseasons
-    // 需要配合 watched 接口算出进度，或者使用 hidden progress 接口
-    // 简单方案：获取 Watched，然后对每个 show 获取 next_episode
-    // 但这需要 OAuth。公开接口只能获取 Watched List，无法直接获取 Next Episode。
-    // 替代方案：获取 "On Deck" (需要 OAuth)。
-    // 公开方案：获取 "Watched" 列表，按最后观看时间排序。
-    if (listType === "progress") {
-        url = `https://api.trakt.tv/users/${traktUser}/watched/shows?extended=full`;
-    } 
-    // 2. 待看列表 (Watchlist)
-    else if (listType === "watchlist") {
-        url = `https://api.trakt.tv/users/${traktUser}/watchlist/${type}/rank?extended=full`;
-    }
-    // 3. 收藏/历史
-    else {
-        url = `https://api.trakt.tv/users/${traktUser}/${listType}/${type}?extended=full`;
+    // --- A. 自定义列表 (Lists) 模式 ---
+    if (section === "lists") {
+        return await fetchUserLists(traktUser, clientId);
     }
 
-    console.log(`[Trakt] Fetching: ${url}`);
+    // --- B. 列表内容模式 (Watchlist/Collection/History) ---
+    // 如果是 lists 下的某个具体列表，需要用户点击后进入 (但 Widget 暂不支持二级菜单跳转回本函数)
+    // 这里我们先处理一级标准列表
+    
+    let url = "";
+    if (section === "watchlist") url = `https://api.trakt.tv/users/${traktUser}/watchlist/${type}/rank?extended=full`;
+    else if (section === "collection") url = `https://api.trakt.tv/users/${traktUser}/collection/${type}?extended=full`;
+    else if (section === "history") url = `https://api.trakt.tv/users/${traktUser}/history/${type}?limit=20&extended=full`;
+    else if (section === "ratings") url = `https://api.trakt.tv/users/${traktUser}/ratings/${type}?extended=full`;
 
     try {
         const res = await Widget.http.get(url, {
-            headers: { 
-                "Content-Type": "application/json", 
-                "trakt-api-version": "2", 
-                "trakt-api-key": clientId 
-            }
+            headers: { "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": clientId }
         });
-        
         const data = res.data || [];
-        if (!Array.isArray(data)) return [{ id: "err", type: "text", title: "Trakt 响应错误" }];
-        if (data.length === 0) return [{ id: "empty", type: "text", title: "列表为空" }];
+        if (!Array.isArray(data)) return [{ id: "err", type: "text", title: "无数据或权限不足" }];
 
-        // 处理数据并匹配 TMDB
-        // 限制 20 个，防止并发过多
+        // 并发匹配 TMDB
         const promises = data.slice(0, 20).map(async (item) => {
-            const subject = item.show || item.movie;
-            if (!subject || !subject.ids || !subject.ids.tmdb) return null;
+            const subject = item.show || item.movie || item; // 兼容不同接口返回
+            if (!subject?.ids?.tmdb) return null;
 
-            // 构造副标题
-            let subTitle = "";
-            if (listType === "progress") {
-                // 对于在追列表，显示 "上次观看: S1E1"
-                // item 结构: { plays, last_watched_at, show, seasons }
-                // 由于公开接口没有 next_episode，我们只能显示 "上次观看时间"
-                const date = item.last_watched_at.split("T")[0];
-                subTitle = `上次观看: ${date}`;
-            } else {
-                subTitle = subject.year ? `${subject.year}` : "";
-            }
+            // 附加信息
+            let subInfo = "";
+            if (section === "ratings") subInfo = `你的评分: ${item.rating}⭐`;
+            else if (section === "history") subInfo = `观看于: ${item.watched_at.split('T')[0]}`;
+            else subInfo = `Trakt: ${subject.year || ""}`;
 
-            return await fetchTmdbDetail(subject.ids.tmdb, type === "movies" ? "movie" : "tv", subTitle, subject.title);
+            return await fetchTmdbDetail(subject.ids.tmdb, type === "movies" ? "movie" : "tv", subInfo, subject.title);
         });
 
         return (await Promise.all(promises)).filter(Boolean);
@@ -132,27 +113,44 @@ async function loadMyTrakt(params = {}) {
     }
 }
 
+// 辅助：获取用户的自定义列表清单
+async function fetchUserLists(username, clientId) {
+    const url = `https://api.trakt.tv/users/${username}/lists`;
+    try {
+        const res = await Widget.http.get(url, {
+            headers: { "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": clientId }
+        });
+        const data = res.data || [];
+        
+        return data.map(list => ({
+            id: `list_${list.ids.slug}`,
+            type: "text", // 暂时无法点击展开，只能作为展示，或者做成 link 跳转 Web
+            title: `📑 ${list.name}`,
+            subTitle: `${list.item_count} 个项目 | 👍 ${list.likes}`,
+            description: list.description || "无描述",
+            // 如果 Forward 支持递归调用，这里可以做更深层的交互
+            // 目前只能展示
+        }));
+    } catch (e) {
+        return [{ id: "err", type: "text", title: "获取列表失败" }];
+    }
+}
+
 // 辅助：TMDB 详情 (免 Key)
 async function fetchTmdbDetail(id, type, subInfo, originalTitle) {
     try {
         const d = await Widget.tmdb.get(`/${type}/${id}`, { params: { language: "zh-CN" } });
-        
         const year = (d.first_air_date || d.release_date || "").substring(0, 4);
-        const genreText = (d.genres || []).map(g => g.name).slice(0, 2).join(" / ");
+        const genres = (d.genres || []).map(g => g.name).slice(0, 2).join(" / ");
         
         return {
-            id: String(d.id),
-            tmdbId: d.id,
-            type: "tmdb",
-            mediaType: type,
-            
+            id: String(d.id), tmdbId: d.id, type: "tmdb", mediaType: type,
             title: d.name || d.title || originalTitle,
-            genreTitle: [year, genreText].filter(Boolean).join(" • "),
+            genreTitle: [year, genres].filter(Boolean).join(" • "),
             subTitle: subInfo,
-            description: d.overview || "暂无简介",
-            
             posterPath: d.poster_path ? `https://image.tmdb.org/t/p/w500${d.poster_path}` : "",
             backdropPath: d.backdrop_path ? `https://image.tmdb.org/t/p/w780${d.backdrop_path}` : "",
+            description: d.overview,
             rating: d.vote_average?.toFixed(1),
             year: year
         };
