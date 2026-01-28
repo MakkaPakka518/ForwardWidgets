@@ -30,7 +30,7 @@ WidgetMetadata = {
         // 模块 1: 今天看什么 (随机/推荐)
         // ===========================================
         {
-            title: "今天看什么",
+            title: "今天看什么（完全随机推荐）",
             functionName: "loadRecommendations",
             type: "list",
             cacheDuration: 0, 
@@ -52,7 +52,7 @@ WidgetMetadata = {
         // 模块 2: 惊喜推荐 (基于 Trakt 混合推荐)
         // ===========================================
         {
-            title: "惊喜推荐 (根据trakt观看历史推荐)",
+            title: "Trakt惊喜推荐（基于Trakt记录推荐）",
             functionName: "loadRandomMix",
             type: "list",
             cacheDuration: 21600, // 6小时刷新
@@ -63,7 +63,7 @@ WidgetMetadata = {
         // 模块 3: 那年今日 (历史回顾)
         // ===========================================
         {
-            title: "那年今日",
+            title: "那年今日（历史上今天上映电影）",
             functionName: "loadHistoryToday",
             type: "list",
             cacheDuration: 43200, 
