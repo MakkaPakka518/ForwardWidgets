@@ -1,9 +1,9 @@
 WidgetMetadata = {
-    id: "discover_hub_zero",
-    title: "探索发现 | 今天看什么",
+    id: "discover_hub_ultimate",
+    title: "探索发现 | 惊喜推荐",
     author: "MakkaPakka",
-    description: "聚合【那年今日】与【今天看什么】。历史经典与随机推荐，一键触达。",
-    version: "3.0.0",
+    description: "聚合【今天看什么】、【Trakt惊喜推荐】与【那年今日】。一站式发现好片。",
+    version: "1.0.4",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
 
@@ -33,7 +33,7 @@ WidgetMetadata = {
             title: "今天看什么",
             functionName: "loadRecommendations",
             type: "list",
-            cacheDuration: 0, // 随机内容不缓存
+            cacheDuration: 0, 
             params: [
                 {
                     name: "mediaType",
@@ -49,13 +49,24 @@ WidgetMetadata = {
         },
 
         // ===========================================
-        // 模块 2: 那年今日 (历史回顾)
+        // 模块 2: 惊喜推荐 (基于 Trakt 混合推荐)
+        // ===========================================
+        {
+            title: "惊喜推荐 (混合)",
+            functionName: "loadRandomMix",
+            type: "list",
+            cacheDuration: 21600, // 6小时刷新
+            params: [] // 无需额外参数
+        },
+
+        // ===========================================
+        // 模块 3: 那年今日 (历史回顾)
         // ===========================================
         {
             title: "那年今日",
             functionName: "loadHistoryToday",
             type: "list",
-            cacheDuration: 43200, // 半天缓存
+            cacheDuration: 43200, 
             params: [
                 {
                     name: "region",
@@ -67,8 +78,7 @@ WidgetMetadata = {
                         { title: "美国 (US)", value: "US" },
                         { title: "中国 (CN)", value: "CN" },
                         { title: "香港 (HK)", value: "HK" },
-                        { title: "日本 (JP)", value: "JP" },
-                        { title: "英国 (GB)", value: "GB" }
+                        { title: "日本 (JP)", value: "JP" }
                     ]
                 },
                 {
@@ -78,7 +88,6 @@ WidgetMetadata = {
                     value: "time_desc",
                     enumOptions: [
                         { title: "时间: 由近到远", value: "time_desc" },
-                        { title: "时间: 由远到近", value: "time_asc" },
                         { title: "评分: 由高到低", value: "vote_desc" },
                         { title: "热度: 由高到低", value: "pop_desc" }
                     ]
@@ -135,7 +144,6 @@ async function loadRecommendations(params = {}) {
     let results = [];
     let reason = "";
 
-    // 1. 尝试 Trakt 推荐
     if (traktUser) {
         try {
             const historyItem = await fetchLastWatched(traktUser, mediaType, traktClientId);
@@ -157,7 +165,6 @@ async function loadRecommendations(params = {}) {
 
     if (!results || results.length === 0) return [{ id: "err", type: "text", title: "未找到推荐" }];
 
-    // 2. 格式化输出 (免 Key)
     return results.slice(0, 15).map(item => {
         const year = (item.first_air_date || item.release_date || "").substring(0, 4);
         const genreText = getGenreText(item.genre_ids);
@@ -170,31 +177,75 @@ async function loadRecommendations(params = {}) {
             backdrop: item.backdrop_path,
             rating: item.vote_average?.toFixed(1),
             genreText: genreText,
-            subTitle: reason, // 显示推荐理由
+            subTitle: reason,
             desc: item.overview
         });
     });
 }
 
 // =========================================================================
-// 2. 业务逻辑：那年今日
+// 2. 业务逻辑：惊喜推荐 (混合)
+// =========================================================================
+
+async function loadRandomMix(params = {}) {
+    const { traktUser, traktClientId } = params;
+    const clientId = traktClientId || DEFAULT_TRAKT_ID;
+
+    if (!traktUser) {
+        return [{ id: "err", type: "text", title: "需填写 Trakt 用户名", subTitle: "请在设置中填写" }];
+    }
+
+    // 获取历史
+    const uniqueShows = await fetchUniqueHistory(traktUser, clientId);
+    if (uniqueShows.length === 0) return [{ id: "empty", type: "text", title: "Trakt 无历史记录" }];
+
+    // 随机抽取 5 部
+    const candidatePool = uniqueShows.slice(0, 30);
+    const seeds = getRandomSeeds(candidatePool, Math.min(candidatePool.length, 5));
+
+    // 并发获取推荐
+    const promiseList = seeds.map(seed => fetchTmdbRecsForSeed(seed));
+    const resultsArray = await Promise.all(promiseList);
+
+    // 混合洗牌
+    const mixedList = [];
+    let maxLen = 0;
+    resultsArray.forEach(l => { if (l.length > maxLen) maxLen = l.length; });
+
+    const seenIds = new Set();
+    for (let i = 0; i < maxLen; i++) {
+        for (const list of resultsArray) {
+            if (i < list.length) {
+                const item = list[i];
+                if (!seenIds.has(item.tmdbId)) {
+                    seenIds.add(item.tmdbId);
+                    mixedList.push(item);
+                }
+            }
+        }
+    }
+
+    const finalItems = mixedList.slice(0, 20);
+    if (finalItems.length === 0) return [{ id: "err", type: "text", title: "无推荐结果" }];
+
+    return finalItems;
+}
+
+// =========================================================================
+// 3. 业务逻辑：那年今日
 // =========================================================================
 
 async function loadHistoryToday(params = {}) {
     const { region = "Global", sortOrder = "time_desc" } = params;
-
     const today = new Date();
     const currentYear = today.getFullYear();
     const month = String(today.getMonth() + 1).padStart(2, '0');
     const day = String(today.getDate()).padStart(2, '0');
 
-    // 生成年份 (1-50年前)
     const yearsAgo = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
     const targetYears = yearsAgo.map(diff => ({ year: currentYear - diff, diff: diff }));
 
     let allMovies = [];
-
-    // 并发请求
     const batchRequest = async (years) => {
         const promises = years.map(yObj => fetchMovieForDate(yObj.year, month, day, region, yObj.diff));
         const results = await Promise.all(promises);
@@ -205,20 +256,16 @@ async function loadHistoryToday(params = {}) {
     await batchRequest(targetYears.slice(5, 10));
     await batchRequest(targetYears.slice(10));
 
-    if (allMovies.length === 0) return [{ id: "empty", type: "text", title: "今日无大事", subTitle: "过去50年同日无高分电影" }];
+    if (allMovies.length === 0) return [{ id: "empty", type: "text", title: "今日无大事" }];
 
-    // 排序
     allMovies.sort((a, b) => {
         if (sortOrder === "time_desc") return parseInt(b.yearStr) - parseInt(a.yearStr);
-        if (sortOrder === "time_asc") return parseInt(a.yearStr) - parseInt(b.yearStr);
         if (sortOrder === "vote_desc") return parseFloat(b.rating) - parseFloat(a.rating);
         return b.popularity - a.popularity;
     });
 
-    // 格式化输出 (免 Key)
     return allMovies.slice(0, 20).map(item => {
         const genreText = getGenreText(item.genre_ids);
-        
         return buildItem({
             id: item.id, tmdbId: item.id, type: "movie",
             title: item.title,
@@ -227,52 +274,34 @@ async function loadHistoryToday(params = {}) {
             backdrop: item.backdrop_path,
             rating: item.rating,
             genreText: genreText,
-            subTitle: `TMDB ${item.rating}`, // 副标题显示评分
-            // 周年纪念信息放入 description
+            subTitle: `TMDB ${item.rating}`,
             desc: `🏆 ${item.diff}周年纪念 | ${item.overview || "暂无简介"}`
         });
     });
 }
 
 // =========================================================================
-// 3. 辅助函数 (Widget.tmdb)
+// 4. 辅助函数 (API)
 // =========================================================================
 
-// A. 那年今日请求
+// A. 那年今日
 async function fetchMovieForDate(year, month, day, region, diff) {
     const dateStr = `${year}-${month}-${day}`;
-    // 构建 params 对象
     const queryParams = {
-        language: "zh-CN",
-        include_adult: false,
-        page: 1,
-        "primary_release_date.gte": dateStr,
-        "primary_release_date.lte": dateStr
+        language: "zh-CN", include_adult: false, page: 1,
+        "primary_release_date.gte": dateStr, "primary_release_date.lte": dateStr
     };
-
-    if (region === "Global") {
-        queryParams["vote_count.gte"] = 50;
-    } else {
-        queryParams["region"] = region;
-        queryParams["vote_count.gte"] = 10;
-    }
+    if (region === "Global") queryParams["vote_count.gte"] = 50;
+    else { queryParams["region"] = region; queryParams["vote_count.gte"] = 10; }
 
     try {
         const res = await Widget.tmdb.get("/discover/movie", { params: queryParams });
         const data = res || {};
         if (!data.results) return [];
-
         return data.results.map(m => ({
-            id: m.id,
-            title: m.title,
-            poster_path: m.poster_path,
-            backdrop_path: m.backdrop_path,
-            rating: m.vote_average ? m.vote_average.toFixed(1) : "0.0",
-            overview: m.overview,
-            yearStr: String(year),
-            diff: diff,
-            popularity: m.popularity,
-            genre_ids: m.genre_ids || []
+            id: m.id, title: m.title, poster_path: m.poster_path, backdrop_path: m.backdrop_path,
+            rating: m.vote_average ? m.vote_average.toFixed(1) : "0.0", overview: m.overview,
+            yearStr: String(year), diff: diff, popularity: m.popularity, genre_ids: m.genre_ids || []
         }));
     } catch (e) { return []; }
 }
@@ -295,7 +324,31 @@ async function fetchLastWatched(username, type, clientId) {
     return null;
 }
 
-// C. TMDB 推荐
+async function fetchUniqueHistory(username, clientId) {
+    const url = `https://api.trakt.tv/users/${username}/history/shows?limit=100`;
+    try {
+        const res = await Widget.http.get(url, {
+            headers: { "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": clientId },
+            timeout: 5000
+        });
+        const data = res.data || [];
+        const uniqueMap = new Map();
+        for (const item of data) {
+            const show = item.show;
+            if (show?.ids?.tmdb && !uniqueMap.has(show.ids.tmdb)) {
+                uniqueMap.set(show.ids.tmdb, { tmdbId: show.ids.tmdb, title: show.title });
+            }
+        }
+        return Array.from(uniqueMap.values());
+    } catch (e) { return []; }
+}
+
+function getRandomSeeds(array, count) {
+    const shuffled = [...array].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, count);
+}
+
+// C. TMDB 推荐/随机 (Widget.tmdb.get)
 async function fetchTmdbRecommendations(id, type) {
     try {
         const res = await Widget.tmdb.get(`/${type}/${id}/recommendations`, { params: { language: "zh-CN", page: 1 } });
@@ -303,30 +356,39 @@ async function fetchTmdbRecommendations(id, type) {
     } catch (e) { return []; }
 }
 
-// D. TMDB 随机
 async function fetchRandomTmdb(type) {
     const page = Math.floor(Math.random() * 20) + 1;
     const year = Math.floor(Math.random() * (2024 - 2015 + 1)) + 2015;
-    
-    const queryParams = {
-        language: "zh-CN",
-        sort_by: "popularity.desc",
-        include_adult: false,
-        "vote_count.gte": 100,
-        page: page
-    };
-    
-    if (type === "movie") queryParams["primary_release_year"] = year;
-    else queryParams["first_air_date_year"] = year;
+    const queryParams = { language: "zh-CN", sort_by: "popularity.desc", include_adult: false, "vote_count.gte": 100, page: page };
+    if (type === "movie") queryParams["primary_release_year"] = year; else queryParams["first_air_date_year"] = year;
 
     try {
         const res = await Widget.tmdb.get(`/discover/${type}`, { params: queryParams });
         let items = (res.results || []);
-        // 洗牌
         for (let i = items.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [items[i], items[j]] = [items[j], items[i]];
         }
         return items;
+    } catch (e) { return []; }
+}
+
+async function fetchTmdbRecsForSeed(seedItem) {
+    try {
+        const res = await Widget.tmdb.get(`/tv/${seedItem.tmdbId}/recommendations`, { params: { language: "zh-CN", page: 1 } });
+        const data = res || {};
+        if (!data.results) return [];
+        return data.results.slice(0, 5).map(item => {
+            const genreText = getGenreText(item.genre_ids);
+            const year = (item.first_air_date || "").substring(0, 4);
+            const score = item.vote_average ? item.vote_average.toFixed(1) : "0.0";
+            return buildItem({
+                id: item.id, tmdbId: item.id, type: "tv",
+                title: item.name || item.title,
+                year: year, poster: item.poster_path, backdrop: item.backdrop_path, rating: score, genreText: genreText,
+                subTitle: `✨ 源于: ${seedItem.title}`,
+                desc: `评分: ${score} | ${item.overview || "暂无简介"}`
+            });
+        });
     } catch (e) { return []; }
 }
