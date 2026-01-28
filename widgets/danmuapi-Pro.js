@@ -4,18 +4,18 @@ WidgetMetadata = {
   version: "1.0.7",
   requiredVersion: "0.0.2",
   description: "支持添加多条api并自命名&繁简互转",
-  author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+  author: "MakkaPakka",
   site: "https://github.com/huangxd-/ForwardWidgets",
   globalParams: [
     // --- 源 1 (主源) ---
-    { name: "s1_name", title: "源1 自定义名称1", type: "input", value: "弹弹PLAY" },
-    { name: "s1_url", title: "源1 地址1", type: "input", value: "https://api.dandanplay.net", description: "必填" },
+    { name: "s1_name", title: "📺 源1 名称", type: "input", value: "官方源" },
+    { name: "s1_url", title: "📺 源1 地址", type: "input", value: "https://api.dandanplay.net", description: "必填" },
     // --- 源 2 (备用) ---
-    { name: "s2_name", title: "源2 自定义名称2", type: "input", value: "源2" },
-    { name: "s2_url", title: "源2 地址2", type: "input", description: "选填" },
+    { name: "s2_name", title: "📡 源2 名称", type: "input", value: "备用源" },
+    { name: "s2_url", title: "📡 源2 地址", type: "input", description: "选填" },
     // --- 源 3 (备用) ---
-    { name: "s3_name", title: "源3 自定义名称3", type: "input" },
-    { name: "s3_url", title: "源3 地址3", type: "input" },
+    { name: "s3_name", title: "📡 源3 名称", type: "input" },
+    { name: "s3_url", title: "📡 源3 地址", type: "input" },
     // --- 功能配置 ---
     {
       name: "convertMode",
