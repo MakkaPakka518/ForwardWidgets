@@ -9,10 +9,10 @@ WidgetMetadata = {
 
     globalParams: [
         {
-            name: "traktClientId",
-            title: "Trakt Client ID (选填)",
+            name: "apiKey",
+            title: "TMDB API Key (必填)",
             type: "input",
-            description: "默认使用公共 Key。",
+            description: "用于获取数据。",
             value: ""
         }
     ],
@@ -22,17 +22,16 @@ WidgetMetadata = {
             title: "综艺更新",
             functionName: "loadVariety",
             type: "list",
-            cacheDuration: 3600,
+            cacheDuration: 0, // 禁用缓存以便调试
             params: [
                 {
                     name: "mode",
-                    title: "查看时间",
+                    title: "查看模式",
                     type: "enumeration",
-                    value: "today",
+                    value: "auto",
                     enumOptions: [
-                        { title: "今日更新", value: "today" },
-                        { title: "明日预告", value: "tomorrow" },
-                        { title: "近期热播 (TMDB源)", value: "trending" } // 新增一个稳定选项
+                        { title: "自动 (当天无数据则推荐热播)", value: "auto" },
+                        { title: "强制查询当天 (可能为空)", value: "strict" }
                     ]
                 }
             ]
@@ -43,76 +42,68 @@ WidgetMetadata = {
 const DEFAULT_TRAKT_ID = "003666572e92c4331002a28114387693994e43f5454659f81640a232f08a5996";
 
 async function loadVariety(params = {}) {
-    const { mode = "today", traktClientId } = params;
-    const clientId = traktClientId || DEFAULT_TRAKT_ID;
-
-    // 1. 如果用户选了 "近期热播"，直接走 TMDB，稳如老狗
-    if (mode === "trending") {
-        return await fetchTmdbVariety();
+    const { mode = "auto", apiKey } = params;
+    
+    if (!apiKey) {
+        return [{ id: "err", type: "text", title: "请填写 TMDB API Key" }];
     }
 
-    // 2. 常规逻辑：先试 Trakt
-    const dateStr = getBeijingDate(mode);
-    console.log(`[Trakt] Fetching ${dateStr}...`);
-    
-    // 稍微放宽一点，country=cn 即可，不要强制 genre，以免漏掉 tag 打错的
-    // 或者保持 genre，看看是否有数据
+    // 1. 获取系统日期 (您现在的 2026-01-28)
+    const dateStr = getSafeDate(); 
+    console.log(`[TimeTravel] User Date: ${dateStr}`);
+
+    // 2. 尝试请求 Trakt (查询 2026 年的排期)
+    // 注意：2026年大概率没数据，这是正常的
     const traktUrl = `https://api.trakt.tv/calendars/all/shows/${dateStr}/1?countries=cn&genres=reality,game-show,talk-show`;
+    let traktData = [];
 
     try {
         const res = await Widget.http.get(traktUrl, {
-            headers: { "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": clientId }
+            headers: { "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": DEFAULT_TRAKT_ID }
         });
-
-        const data = res.data || [];
-        
-        // 3. 如果 Trakt 有数据，处理并返回
-        if (Array.isArray(data) && data.length > 0) {
-            console.log(`[Trakt] Got ${data.length} items.`);
-            const promises = data.map(async (item) => {
-                // ... (Trakt 数据处理逻辑同前)
-                if (!item.show.ids.tmdb) return null;
-                return await fetchTmdbDetail(item.show.ids.tmdb, item);
-            });
-            return (await Promise.all(promises)).filter(Boolean);
-        } else {
-            console.log("[Trakt] Empty, switching to TMDB fallback...");
-        }
+        traktData = res.data || [];
     } catch (e) {
-        console.error("[Trakt] Error:", e);
+        console.log("Trakt request failed, ignoring.");
     }
 
-    // 4. 兜底逻辑：Trakt 没数据，走 TMDB Discover
-    // 既然 Trakt 说今天没综艺，那我们就推荐点"最近更新"的综艺，总比空白好
-    return await fetchTmdbVariety(dateStr);
+    // 3. 如果 Trakt 有数据，直接显示 (天选之子！)
+    if (traktData.length > 0) {
+        const promises = traktData.map(async (item) => {
+            if (!item.show.ids.tmdb) return null;
+            return await fetchTmdbDetail(item.show.ids.tmdb, item, apiKey);
+        });
+        return (await Promise.all(promises)).filter(Boolean);
+    }
+
+    // 4. 如果没数据 (2026年大概率没数据)
+    if (mode === "strict") {
+        return [{ id: "empty", type: "text", title: "2026年暂无排期", subTitle: "Trakt 数据库尚未收录该日期的综艺" }];
+    }
+
+    // 5. 自动回溯模式 (Auto Fallback)
+    // 既然 2026 没数据，我们去 TMDB 拉取 "最新收录" 或 "正在热播" 的综艺
+    // sort_by=first_air_date.desc 会返回数据库里最新的综艺 (可能是2024, 2025的)
+    return await fetchTmdbLatest(apiKey, dateStr);
 }
 
 // ==========================================
-// TMDB 兜底/直连逻辑
+// TMDB 智能回溯
 // ==========================================
 
-async function fetchTmdbVariety(targetDate = null) {
-    // TMDB Discover: 
-    // - Origin Country: CN
-    // - Genres: Reality(10764) OR Talk(10767)
-    // - Sort: 播出日期降序 (或者热度)
-    // - Air Date <= Today (只看已经出的)
-    
-    let url = `/discover/tv?language=zh-CN&sort_by=first_air_date.desc&page=1&with_origin_country=CN&with_genres=10764|10767&include_null_first_air_dates=false`;
-    
-    // 如果指定了日期（比如是兜底模式），我们可以尝试筛选 air_date
-    // 但 TMDB Discover 的 air_date.gte/lte 筛选的是"首播日期"，对于"综艺的某一集更新"支持不好。
-    // 所以最佳策略是：直接拉取"最近热播的综艺"，并在副标题提示"近期热播"
+async function fetchTmdbLatest(apiKey, userDate) {
+    // 筛选：国产(CN) + 综艺(Reality/Talk) + 按首播日期降序
+    // 这样能保证即使用户在2026年，也能看到2024/2025年最新的综艺
+    const url = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&language=zh-CN&sort_by=first_air_date.desc&page=1&with_origin_country=CN&with_genres=10764|10767&include_null_first_air_dates=false`;
     
     try {
-        const res = await Widget.tmdb.get(url);
-        const results = res.results || [];
+        const res = await Widget.http.get(url);
+        const data = res.data || {};
         
-        if (results.length === 0) {
-            return [{ id: "empty", type: "text", title: "暂无数据", subTitle: "TMDB 也暂无国产综艺记录" }];
+        if (!data.results || data.results.length === 0) {
+            return [{ id: "empty", type: "text", title: "数据库空白", subTitle: "TMDB 也没有数据" }];
         }
 
-        return results.map(item => {
+        return data.results.map(item => {
             const date = item.first_air_date || item.release_date || "";
             const year = date.substring(0, 4);
             const rating = item.vote_average ? item.vote_average.toFixed(1) : "0.0";
@@ -125,9 +116,9 @@ async function fetchTmdbVariety(targetDate = null) {
                 mediaType: "tv",
                 
                 title: item.name,
-                // 这里我们不知道具体是哪一集更新，所以显示"近期热播"
-                subTitle: `近期热播 · ⭐ ${rating}`, 
-                genreTitle: `${year} • 综艺`,
+                // 副标题提示用户：这是“最新收录”，而非“今日更新”
+                subTitle: `最新收录 · ⭐ ${rating}`, 
+                genreTitle: `${year} • 综艺`, // 年份 • 类型
                 
                 posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
                 backdropPath: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : "",
@@ -135,16 +126,18 @@ async function fetchTmdbVariety(targetDate = null) {
             };
         });
     } catch (e) {
-        return [{ id: "err", type: "text", title: "TMDB 连接失败" }];
+        return [{ id: "err", type: "text", title: "TMDB 连接失败", subTitle: e.message }];
     }
 }
 
-// 辅助：Trakt 单项转 Forward Item
-async function fetchTmdbDetail(tmdbId, traktItem) {
+// 辅助：Trakt 详情转换
+async function fetchTmdbDetail(tmdbId, traktItem, apiKey) {
     try {
-        const d = await Widget.tmdb.get(`/tv/${tmdbId}`, { params: { language: "zh-CN" } });
+        const url = `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${apiKey}&language=zh-CN`;
+        const res = await Widget.http.get(url);
+        const d = res.data;
         if (!d) return null;
-        
+
         const ep = traktItem.episode;
         const airTime = traktItem.first_aired.split("T")[0];
         const genres = (d.genres || []).map(g => g.name).slice(0, 2).join(" / ");
@@ -158,21 +151,13 @@ async function fetchTmdbDetail(tmdbId, traktItem) {
             genreTitle: [airTime, genres].filter(Boolean).join(" • "),
             subTitle: `S${ep.season}E${ep.number} · ${ep.title || "更新"}`,
             posterPath: d.poster_path ? `https://image.tmdb.org/t/p/w500${d.poster_path}` : "",
-            backdropPath: d.backdrop_path ? `https://image.tmdb.org/t/p/w780${d.backdrop_path}` : "",
-            description: d.overview,
-            rating: d.vote_average?.toFixed(1),
-            year: (d.first_air_date || "").substring(0, 4)
+            description: d.overview
         };
     } catch (e) { return null; }
 }
 
-function getBeijingDate(mode) {
+function getSafeDate() {
     const d = new Date();
-    const utc8 = d.getTime() + (d.getTimezoneOffset() * 60000) + (3600000 * 8);
-    const cnDate = new Date(utc8);
-    if (mode === "tomorrow") cnDate.setDate(cnDate.getDate() + 1);
-    const y = cnDate.getFullYear();
-    const m = String(cnDate.getMonth() + 1).padStart(2, '0');
-    const day = String(cnDate.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    // 强制输出 YYYY-MM-DD，不依赖时区计算
+    return d.toISOString().split('T')[0];
 }
