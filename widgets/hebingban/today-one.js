@@ -1,8 +1,8 @@
 WidgetMetadata = {
     id: "discover_hub_ultimate",
     title: "探索发现 | 惊喜推荐",
-    author: "MakkaPakka",
-    description: "聚合【今天看什么】、【Trakt惊喜推荐】与【那年今日】。一站式发现好片。",
+    author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+    description: "聚合【今天看什么】、【Trakt惊喜推荐】与【那年今日】、一站式发现好片。",
     version: "1.0.4",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
