@@ -6,13 +6,12 @@ WidgetMetadata = {
     version: "1.2.1",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
-    // 1. 全局参数 (仅剩 Trakt ID，且选填)
 
     // 1. 全局参数 (仅剩 Trakt ID，且选填)
     globalParams: [
         {
             name: "traktClientId",
-            title: "Trakt Client ID (选填)",
+            title: "Trakt Client ID (选填trakt榜需要)",
             type: "input",
             description: "Trakt 榜单专用，不填则使用公共 ID。",
             value: ""
