@@ -3,14 +3,16 @@ WidgetMetadata = {
     title: "全球影视 | 分流聚合",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "集大成之作：Trakt/豆瓣/平台分流，全线支持【年份•类型】展示。",
-    version: "1.2.0",
+    version: "1.2.1",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
+    // 1. 全局参数 (仅剩 Trakt ID，且选填)
+
     // 1. 全局参数 (仅剩 Trakt ID，且选填)
     globalParams: [
         {
             name: "traktClientId",
-            title: "Trakt Client ID (选填)",
+            title: "Trakt Client ID (选填trakt需要)",
             type: "input",
             description: "Trakt 榜单专用，不填则使用公共 ID。",
             value: ""
@@ -46,9 +48,13 @@ WidgetMetadata = {
                     name: "traktType",
                     title: "Trakt 类型",
                     type: "enumeration",
-                    value: "shows",
+                    value: "all", // 默认全部
                     belongTo: { paramName: "source", value: ["trakt_trending", "trakt_popular", "trakt_anticipated"] },
-                    enumOptions: [ { title: "剧集", value: "shows" }, { title: "电影", value: "movies" } ]
+                    enumOptions: [
+                        { title: "全部 (剧集+电影)", value: "all" }, // 新增
+                        { title: "剧集", value: "shows" },
+                        { title: "电影", value: "movies" }
+                    ]
                 },
                 { name: "page", title: "页码", type: "page" }
             ]
@@ -142,29 +148,72 @@ function buildItem({ id, tmdbId, type, title, year, poster, backdrop, rating, ge
 // =========================================================================
 
 async function loadTrendHub(params = {}) {
-    const { source, traktType = "shows" } = params;
-    const page = params.page || 1; // 分页
+    const { source, traktType = "all" } = params;
+    const page = params.page || 1; 
     const traktClientId = params.traktClientId || DEFAULT_TRAKT_ID;
 
-    // --- Trakt (支持分页) ---
+    // --- Trakt (支持混合模式) ---
     if (source.startsWith("trakt_")) {
         const listType = source.replace("trakt_", ""); 
-        const traktData = await fetchTraktData(traktType, listType, traktClientId, page);
-        
-        if (!traktData || traktData.length === 0) return page === 1 ? await fetchTmdbFallback(traktType) : [];
+        let rawData = [];
 
-        const promises = traktData.map(async (item, index) => {
-            let subject = item.show || item.movie || item;
-            let rank = (page - 1) * 15 + index + 1;
-            let stats = listType === "trending" ? `🔥 ${item.watchers || 0} 人在看` : (listType === "anticipated" ? `❤️ ${item.list_count || 0} 人想看` : `No. ${rank}`);
+        // 1. 混合模式 (All)
+        if (traktType === "all") {
+            // 并发请求 Movies 和 Shows (各取10个，混合后20个)
+            // 注意：这里为了分页连贯性，我们还是传 page，但可能导致两边进度不一致
+            // 简单策略：两边都取 page，然后混合排序
+            const [movies, shows] = await Promise.all([
+                fetchTraktData("movies", listType, traktClientId, page),
+                fetchTraktData("shows", listType, traktClientId, page)
+            ]);
+            rawData = [...movies, ...shows];
             
+            // 混合排序 (Trakt 返回通常已按 rank/watchers 排序，我们这里按 watchers 或 list_count 再排一次)
+            // Trending: watchers
+            // Popular: (无特定指标，通常按 rank)
+            // Anticipated: list_count
+            rawData.sort((a, b) => {
+                const valA = a.watchers || a.list_count || 0;
+                const valB = b.watchers || b.list_count || 0;
+                // 如果没有指标(popular)，保持原样或随机？
+                // Popular 接口返回 rank 吗？API 文档没细说，通常返回顺序就是 rank。
+                // 简单起见，如果都是 popular，就交错排列
+                if (valA === 0 && valB === 0) return 0;
+                return valB - valA; // 降序
+            });
+            
+        } else {
+            // 单一模式
+            rawData = await fetchTraktData(traktType, listType, traktClientId, page);
+        }
+        
+        if (!rawData || rawData.length === 0) return page === 1 ? await fetchTmdbFallback(traktType === "all" ? "movie" : traktType) : [];
+
+        // 2. 处理数据
+        const promises = rawData.slice(0, 20).map(async (item, index) => {
+            let subject = item.show || item.movie || item;
+            // 确定类型
+            const mediaType = item.show ? "tv" : "movie";
+            
+            let rank = (page - 1) * 15 + index + 1;
+            let stats = "";
+            
+            if (listType === "trending") stats = `🔥 ${item.watchers || 0} 人在看`;
+            else if (listType === "anticipated") stats = `❤️ ${item.list_count || 0} 人想看`;
+            else stats = `No. ${rank}`; // Popular
+
+            // 混合模式加前缀
+            if (traktType === "all") {
+                stats = `[${mediaType === "tv" ? "剧" : "影"}] ${stats}`;
+            }
+
             if (!subject || !subject.ids || !subject.ids.tmdb) return null;
-            return await fetchTmdbDetail(subject.ids.tmdb, traktType === "shows" ? "tv" : "movie", stats, subject.title);
+            return await fetchTmdbDetail(subject.ids.tmdb, mediaType, stats, subject.title);
         });
         return (await Promise.all(promises)).filter(Boolean);
     }
 
-    // --- Douban (支持分页) ---
+    // --- Douban (保持不变) ---
     if (source.startsWith("db_")) {
         let tag = "热门", type = "tv";
         if (source === "db_tv_cn") { tag = "国产剧"; type = "tv"; }
@@ -174,13 +223,11 @@ async function loadTrendHub(params = {}) {
         return await fetchDoubanAndMap(tag, type, page);
     }
 
-    // --- Bilibili (本地分页) ---
+    // --- Bilibili / Bangumi (保持不变) ---
     if (source.startsWith("bili_")) {
         const type = source === "bili_cn" ? 4 : 1; 
         return await fetchBilibiliRank(type, page);
     }
-
-    // --- Bangumi (每日放送无分页) ---
     if (source === "bgm_daily") {
         if (page > 1) return [];
         return await fetchBangumiDaily();
@@ -299,11 +346,12 @@ function mergeTmdb(target, source) {
 }
 
 // =========================================================================
-// 第三方源 (Trakt/Douban/Bili)
+// 第三方源
 // =========================================================================
 
 async function fetchTraktData(type, list, id, page) {
     try {
+        // 请求 15 个，如果是混合模式，两边各 15 个
         const res = await Widget.http.get(`https://api.trakt.tv/${type}/${list}?limit=15&page=${page}`, {
             headers: { "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": id }
         });
@@ -339,10 +387,8 @@ async function fetchDoubanAndMap(tag, type, page) {
 async function fetchBilibiliRank(type, page) {
     try {
         const res = await Widget.http.get(`https://api.bilibili.com/pgc/web/rank/list?day=3&season_type=${type}`);
-        // 全量数据
         const allList = (res.data?.result?.list || res.data?.data?.list || []);
         
-        // 本地分页
         const pageSize = 15;
         const start = (page - 1) * pageSize;
         const end = start + pageSize;
@@ -407,4 +453,4 @@ async function fetchTmdbFallback(traktType) {
             });
         });
     } catch(e) { return []; }
-            }
+}
