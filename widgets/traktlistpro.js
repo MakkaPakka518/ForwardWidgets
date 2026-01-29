@@ -1,6 +1,6 @@
 WidgetMetadata = {
     id: "trakt_personal_mixed",
-    title: "Trakt 个人中心",
+    title: "Trak 追剧日历&个人中心",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "追剧日历:显示你观看剧集最新集的 更新时间&Trakt 待看/收藏/历史。",
     version: "1.0.7",
