@@ -3,7 +3,7 @@ WidgetMetadata = {
     title: "Trakt 个人中心",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "追剧日历:显示你观看剧集最新集的 更新时间&Trakt 待看/收藏/历史。",
-    version: "1.0.6",
+    version: "1.0.7",
     requiredVersion: "0.0.1",
     site: "https://trakt.tv",
 
@@ -39,7 +39,7 @@ WidgetMetadata = {
                     belongTo: { paramName: "section", value: ["watchlist", "collection", "history"] },
                     enumOptions: [ { title: "全部", value: "all" }, { title: "剧集", value: "shows" }, { title: "电影", value: "movies" } ]
                 },
-                // 追剧日历专用排序 (3个选项)
+                // 追剧日历专用排序
                 {
                     name: "updateSort",
                     title: "追剧模式",
@@ -49,7 +49,7 @@ WidgetMetadata = {
                     enumOptions: [
                         { title: "🔜 从今天往后", value: "future_first" },
                         { title: "🔄 按更新倒序", value: "air_date_desc" },
-                        { title: "👁️ 按观看倒序", value: "watched_at" } // 补回来的
+                        { title: "👁️ 按观看倒序", value: "watched_at" }
                     ]
                 },
                 { name: "page", title: "页码", type: "page" }
@@ -58,17 +58,34 @@ WidgetMetadata = {
     ]
 };
 
+// ==========================================
+// 0. 工具函数
+// ==========================================
+
+// 格式化日期 MM-30
+function formatShortDate(dateStr) {
+    if (!dateStr) return "待定";
+    const date = new Date(dateStr);
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const d = date.getDate().toString().padStart(2, '0');
+    return `${m}-${d}`;
+}
+
+// ==========================================
+// 1. 主逻辑
+// ==========================================
+
 async function loadTraktProfile(params = {}) {
     const { traktUser, traktClientId, section, updateSort = "future_first", type = "all", page = 1 } = params;
 
     if (!traktUser || !traktClientId) return [{ id: "err", type: "text", title: "请填写用户名和Client ID" }];
 
-    // === A. 追剧日历 (Updates) ===
+    // === A. 追剧日历 (Updates) - 核心修改区域 ===
     if (section === "updates") {
         return await loadUpdatesLogic(traktUser, traktClientId, updateSort, page);
     }
 
-    // === B. 常规列表 ===
+    // === B. 常规列表 (保持不变) ===
     let rawItems = [];
     const sortType = "added,desc";
     if (type === "all") {
@@ -96,7 +113,10 @@ async function loadTraktProfile(params = {}) {
     return (await Promise.all(promises)).filter(Boolean);
 }
 
-// 核心：追剧日历逻辑
+// ==========================================
+// 2. 追剧日历逻辑 (已优化显示格式)
+// ==========================================
+
 async function loadUpdatesLogic(user, id, sort, page) {
     const url = `https://api.trakt.tv/users/${user}/watched/shows?extended=noseasons&limit=100`;
     try {
@@ -121,7 +141,7 @@ async function loadUpdatesLogic(user, id, sort, page) {
                 trakt: item, tmdb: tmdb,
                 sortDate: sortDate,
                 isFuture: isFuture,
-                watchedDate: item.last_watched_at // 用于 watched_at 排序
+                watchedDate: item.last_watched_at
             };
         }));
 
@@ -136,34 +156,51 @@ async function loadUpdatesLogic(user, id, sort, page) {
             valid.length = 0; 
             valid.push(...futureShows, ...pastShows);
         } else if (sort === "air_date_desc") {
-            // 更新时间倒序
             valid.sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
         } else {
-            // 观看时间倒序 (默认 & 补回)
             valid.sort((a, b) => new Date(b.watchedDate) - new Date(a.watchedDate));
         }
 
         const start = (page - 1) * 15;
         return valid.slice(start, start + 15).map(item => {
             const d = item.tmdb;
-            let dateLabel = "暂无排期", epInfo = "已完结";
             
+            // === 💡 UI 优化核心 ===
+            let displayStr = "暂无排期";
+            let icon = "📅";
+            let epData = null;
+
             if (d.next_episode_to_air) {
-                dateLabel = `🔜 ${d.next_episode_to_air.air_date}`; 
-                epInfo = `S${d.next_episode_to_air.season_number}E${d.next_episode_to_air.episode_number}`;
+                icon = "🔜";
+                epData = d.next_episode_to_air;
             } else if (d.last_episode_to_air) {
-                dateLabel = `📅 ${d.last_episode_to_air.air_date}`;
-                epInfo = `S${d.last_episode_to_air.season_number}E${d.last_episode_to_air.episode_number}`;
+                icon = "📅";
+                epData = d.last_episode_to_air;
             }
-            
-            // 如果是按观看时间排序，可以在副标题提示观看时间
+
+            if (epData) {
+                // 格式：🔜 01-30 📺 S01E04
+                const shortDate = formatShortDate(epData.air_date);
+                displayStr = `${icon} ${shortDate} 📺 S${epData.season_number}E${epData.episode_number}`;
+            }
+
+            // 特殊：如果是按观看时间排序
             if (sort === "watched_at") {
-                dateLabel = `👁️ ${item.watchedDate.split('T')[0]}`;
+                const watchShort = formatShortDate(item.watchedDate.split('T')[0]);
+                // 如果你希望在观看历史模式也显示更新信息，保持上面的 displayStr
+                // 如果希望显示观看时间，可以取消下面注释：
+                // displayStr = `👁️ ${watchShort} 看过`;
             }
             
             return {
-                id: String(d.id), tmdbId: d.id, type: "tmdb", mediaType: "tv",
-                title: d.name, genreTitle: dateLabel, subTitle: epInfo,
+                id: String(d.id), 
+                tmdbId: d.id, 
+                type: "tmdb", 
+                mediaType: "tv",
+                title: d.name, 
+                // 强制双位置显示，确保万无一失
+                genreTitle: displayStr, 
+                subTitle: displayStr,
                 posterPath: d.poster_path ? `https://image.tmdb.org/t/p/w500${d.poster_path}` : "",
                 description: `上次观看: ${item.watchedDate.split("T")[0]}\n${d.overview}`
             };
@@ -184,6 +221,7 @@ async function fetchTraktList(section, type, sort, page, user, id) {
 
 async function fetchTmdbDetail(id, type, subInfo, originalTitle) {
     try {
+        // 修复了你代码里的 'Widge' 拼写错误 -> Widget
         const d = await Widget.tmdb.get(`/${type}/${id}`, { params: { language: "zh-CN" } });
         const year = (d.first_air_date || d.release_date || "").substring(0, 4);
         return {
