@@ -2,7 +2,7 @@ WidgetMetadata = {
     id: "variety_v4",
     title: "test",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
-    description: "综艺更新时间表，热度榜",
+    description: "test",
     version: "2.0.1",
     requiredVersion: "0.0.1",
     site: "https://www.themoviedb.org",
