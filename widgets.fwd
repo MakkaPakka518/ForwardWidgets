@@ -85,6 +85,15 @@
       "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/cn-int-bangdan.js"
     },
     {
+      "id": "makka.platform.originals",
+      "title": "流媒体·独家原创（更新时间版）",
+      "description": "各平台独播剧",
+      "requiredVersion": "0.0.1",
+      "version": "1.0.5",
+      "author": "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+      "url": "https://raw.githubusercontent.com/MakkaPakka518/ForwardWidgets/refs/heads/main/widgets/zhijiyong-myself/pingtai.js"
+    },
+    {
       "id": "platform.originals.ui.fix",
       "title": "流媒体·独家原创",
       "description": "发现Netflix/HBO/腾讯/B站等平台自制内容",
