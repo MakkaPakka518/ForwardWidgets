@@ -1,9 +1,9 @@
 WidgetMetadata = {
-    id: "twitch_box_pro",
-    title: "Twitch 关注列表",
+    id: "twitch_box_fix",
+    title: "Twitch 关注 (修复版)",
     author: "Makkapakka",
-    description: "专为 Twitch 设计。填入主播ID，实时显示封面，永久有效。",
-    version: "1.0.0",
+    description: "V1.1 修复：解决没有播放按钮/无法跳转的问题。点击卡片将直接跳转 Twitch App 或网页观看。",
+    version: "1.1.0",
     requiredVersion: "0.0.1",
     site: "https://www.twitch.tv",
 
@@ -12,24 +12,23 @@ WidgetMetadata = {
             title: "我的关注",
             functionName: "loadTwitchStreamers",
             type: "list",
-            cacheDuration: 60, // 1分钟刷新一次封面
+            cacheDuration: 60,
             params: [
                 {
                     name: "streamers",
                     title: "主播 ID 列表",
                     type: "input",
-                    description: "用英文逗号分隔，例如: uzi, shroud, tarik, tenz",
-                    // 默认给你几个热门台做测试
-                    value: "shroud, tarik, summit1g, tenz, kyedae"
+                    description: "例如: uzi, shroud, tarik (逗号分隔)",
+                    value: "shroud, tarik, tenz, seoi1016"
                 },
                 {
-                    name: "quality",
-                    title: "封面质量",
+                    name: "mode",
+                    title: "打开方式",
                     type: "enumeration",
-                    value: "large",
+                    value: "app",
                     enumOptions: [
-                        { title: "高清预览", value: "large" },
-                        { title: "节省流量", value: "medium" }
+                        { title: "跳转 Twitch App (推荐)", value: "app" },
+                        { title: "内置浏览器", value: "web" }
                     ]
                 }
             ]
@@ -38,50 +37,51 @@ WidgetMetadata = {
 };
 
 async function loadTwitchStreamers(params = {}) {
-    const { streamers, quality } = params;
+    const { streamers, mode } = params;
 
-    if (!streamers) {
-        return [{ id: "tip", type: "text", title: "请填写主播 ID" }];
-    }
+    if (!streamers) return [{ id: "tip", type: "text", title: "请填写主播 ID" }];
 
-    // 处理输入的 ID 列表 (去空格，去空项)
     const idList = streamers.split(/[,，]/).map(s => s.trim()).filter(Boolean);
 
-    if (idList.length === 0) {
-        return [{ id: "empty", type: "text", title: "列表为空" }];
-    }
+    if (idList.length === 0) return [{ id: "empty", type: "text", title: "列表为空" }];
 
     return idList.map(id => {
-        // Twitch 官方封面 CDN 规则 (这是一个公开的魔法)
-        // 只要这个主播在直播，这个链接就会显示实时画面
-        // 如果不在直播，可能会显示 404 图或者旧图，但 Forward 会尝试加载
-        const timestamp = new Date().getTime(); // 加时间戳防止缓存旧图
-        const imgSize = quality === "large" ? "640x360" : "320x180";
-        const posterUrl = `https://static-cdn.jtvnw.net/previews-ttv/live_user_${id}-${imgSize}.jpg?t=${timestamp}`;
+        const timestamp = new Date().getTime(); 
+        // 封面图
+        const posterUrl = `https://static-cdn.jtvnw.net/previews-ttv/live_user_${id}-640x360.jpg?t=${timestamp}`;
 
-        // 构造 Twitch 嵌入式播放器链接
-        // parent=localhost 是绕过 Twitch 跨域限制的关键
-        const playUrl = `https://player.twitch.tv/?channel=${id}&parent=localhost&muted=false`;
+        // 构造跳转链接
+        let targetUrl = "";
+        let subTitle = "";
+
+        if (mode === "web") {
+            // 网页模式：使用纯净播放器页面
+            targetUrl = `https://player.twitch.tv/?channel=${id}&parent=localhost&muted=false`;
+            subTitle = "🌐 浏览器观看";
+        } else {
+            // App 模式：尝试唤起 Twitch App
+            // 如果手机没装 App，通常系统会自动跳转到 App Store 或网页
+            targetUrl = `twitch://stream/${id}`; 
+            // 备用：如果上面的唤起失败，部分系统可能需要 http 链接来触发通用链接跳转
+            // targetUrl = `https://www.twitch.tv/${id}`; 
+            subTitle = "📱 App 观看";
+        }
 
         return {
             id: `twitch_${id}`,
-            // 使用 webview 模式，因为 Twitch 的 m3u8 有严格的 CORS 和 Token 验证
-            // 原生播放器搞不定，用 WebView 嵌入是最稳的，相当于在 App 里开个小窗口看
-            type: "webview", 
+            // 关键修改：类型改为 url，这样就是点击跳转逻辑
+            type: "url", 
             
-            url: playUrl,
+            // 这里填写跳转地址
+            url: targetUrl, 
+            
+            // ⚠️ 注意：这里不要填 videoUrl
+            // 填了 videoUrl 就会出现你截图里的“播放按钮”然后报错，因为我们没有 m3u8 视频流
             
             title: id.toUpperCase(),
-            subTitle: "🟢 点击观看直播",
+            subTitle: subTitle,
             posterPath: posterUrl,
-            description: `频道: ${id}\n来源: Twitch Official`,
-            
-            // 额外配置：保持屏幕常亮等
-            windowType: "safari", // 或者 "inapp" 看 Forward 支持哪种
-            style: {
-                // 如果 Forward 支持自定义宽高比，这里可以优化
-                aspectRatio: 16/9
-            }
+            description: `频道: ${id}\n点击卡片/封面即可跳转观看直播\n实时画面抓取中...`
         };
     });
 }
