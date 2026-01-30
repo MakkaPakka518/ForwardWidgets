@@ -1,9 +1,9 @@
 WidgetMetadata = {
-  id: "gemini.platform.v2.5",
-  title: "流媒体·独家原创 (完美UI版)",
+  id: "gemini.platform.originals.v2.6",
+  title: "流媒体·独家原创 (复刻版)",
   author: "Gemini & Makkapakka",
-  description: "v2.5: 完美复刻参考代码逻辑。严格遵循【日期+集数+题材】格式 (如 01-31 S01E04 科幻)；去除表情符号。",
-  version: "2.5.0",
+  description: "v2.6: 1:1复刻综艺榜逻辑。使用TMDB接口获取精准分集时间；格式严格统一为 01-31 S01E04 科幻。",
+  version: "2.6.0",
   requiredVersion: "0.0.1",
   modules: [
     {
@@ -58,7 +58,7 @@ WidgetMetadata = {
             { title: "🔥 综合热度", value: "popularity.desc" },
             { title: "⭐ 最高评分", value: "vote_average.desc" },
             { title: "🆕 最新首播", value: "first_air_date.desc" },
-            { title: "📅 按更新时间 (追更模式)", value: "next_episode" },
+            { title: "📅 按更新时间 (从近到远)", value: "next_episode" },
             { title: "📆 今日播出 (每日榜单)", value: "daily_airing" }
           ],
         },
@@ -74,12 +74,8 @@ WidgetMetadata = {
 };
 
 // ==========================================
-// 常量定义
+// 题材映射表 (用于显示中文类型)
 // ==========================================
-const TRAKT_CLIENT_ID = "95b59922670c84040db3632c7aac6f33704f6ffe5cbf3113a056e37cb45cb482";
-const TRAKT_API_BASE = "https://api.trakt.tv";
-
-// 题材 ID 映射表 (TMDB ID -> 中文)
 const GENRE_MAP = {
     10759: "动作冒险", 16: "动画", 35: "喜剧", 80: "犯罪", 99: "纪录片",
     18: "剧情", 10751: "家庭", 10762: "儿童", 9648: "悬疑", 10763: "新闻",
@@ -89,10 +85,10 @@ const GENRE_MAP = {
 };
 
 // ==========================================
-// 工具函数 (完全照搬参考代码)
+// 工具函数 (复刻自综艺榜代码)
 // ==========================================
 
-// 格式化日期 MM-DD
+// 格式化日期 MM-30
 function formatShortDate(dateStr) {
     if (!dateStr) return "";
     const date = new Date(dateStr);
@@ -101,14 +97,14 @@ function formatShortDate(dateStr) {
     return `${m}-${d}`;
 }
 
-// 获取题材中文名
+// 获取中文题材
 function getGenreName(ids) {
     if (!ids || ids.length === 0) return "";
-    return GENRE_MAP[ids[0]] || ""; // 只取第一个
+    return GENRE_MAP[ids[0]] || "";
 }
 
 // ==========================================
-// 核心逻辑
+// 主逻辑
 // ==========================================
 
 async function loadPlatformOriginals(params) {
@@ -117,7 +113,7 @@ async function loadPlatformOriginals(params) {
   const sortBy = params.sortBy || "popularity.desc";
   const page = params.page || 1;
 
-  // === 1. 构建 TMDB 查询参数 ===
+  // 1. 基础列表查询 (Discover)
   let endpoint = "/discover/tv";
   let queryParams = {
       with_networks: networkId,
@@ -131,20 +127,19 @@ async function loadPlatformOriginals(params) {
     if (sortBy === "first_air_date.desc") queryParams.sort_by = "release_date.desc";
     else if (sortBy === "next_episode" || sortBy === "daily_airing") queryParams.sort_by = "popularity.desc"; 
     else queryParams.sort_by = sortBy;
-    
   } else {
-    // TV 类 (剧集/动漫/综艺)
+    // TV 类型处理
     if (contentType === "anime") queryParams.with_genres = "16"; 
     else if (contentType === "variety") queryParams.with_genres = "10764|10767"; 
 
+    // 排序预处理
     if (sortBy === "daily_airing") {
-        const today = new Date();
-        const dateStr = today.toISOString().split("T")[0]; 
-        queryParams["air_date.gte"] = dateStr;
-        queryParams["air_date.lte"] = dateStr;
+        const today = new Date().toISOString().split("T")[0]; 
+        queryParams["air_date.gte"] = today;
+        queryParams["air_date.lte"] = today;
         queryParams.sort_by = "popularity.desc";
     } else if (sortBy === "next_episode") {
-        queryParams.sort_by = "popularity.desc";
+        queryParams.sort_by = "popularity.desc"; // 先取热度，后排时间
     } else {
         if (sortBy.includes("vote_average")) queryParams["vote_count.gte"] = 100;
         queryParams.sort_by = sortBy;
@@ -159,62 +154,70 @@ async function loadPlatformOriginals(params) {
       return page === 1 ? [{ title: "暂无数据", subTitle: "尝试切换类型或平台", type: "text" }] : [];
     }
 
-    // === 2. 数据处理与增强 (核心逻辑) ===
-    const isUpdateMode = (contentType !== "movie" && (sortBy === "next_episode" || sortBy === "daily_airing"));
-    const processCount = isUpdateMode ? 12 : 20;
+    // === 2. 详情获取与格式化 (严格复刻综艺榜逻辑) ===
+    
+    // 判断是否需要查详细集数 (非电影 且 (追更 or 每日))
+    const needDetails = (contentType !== "movie" && (sortBy === "next_episode" || sortBy === "daily_airing"));
+    const processCount = needDetails ? 15 : 20;
 
-    const enrichedItems = await Promise.all(items.slice(0, processCount).map(async (item) => {
-        let displayInfoStr = ""; // 核心展示字符串
-        let sortDate = "1900-01-01"; // 排序用的日期
-
-        // 默认值
-        sortDate = item.first_air_date || item.release_date || "2099-01-01";
+    const processedItems = await Promise.all(items.slice(0, processCount).map(async (item) => {
+        let displayStr = ""; 
+        let sortDate = "1900-01-01";
         
-        // 获取题材
-        const genreName = getGenreName(item.genre_ids);
+        // 默认基础信息
+        sortDate = item.first_air_date || item.release_date || "2099-01-01";
+        const year = sortDate.substring(0, 4);
+        const genre = getGenreName(item.genre_ids);
+        
+        if (needDetails) {
+            // !!! 核心复刻：直接调用 TMDB 详情接口获取时间 !!!
+            try {
+                const detail = await Widget.tmdb.get(`/tv/${item.id}`, { params: { language: "zh-CN" } });
+                if (detail) {
+                    const nextEp = detail.next_episode_to_air;
+                    const lastEp = detail.last_episode_to_air;
 
-        if (isUpdateMode) {
-             // 优先从 Trakt 获取精准集数信息
-             const ep = await getTraktEpisodeInfo(item.id);
-             
-             if (ep) {
-                 sortDate = ep.air_date; 
-                 const dateStr = formatShortDate(sortDate);
-                 const epStr = `S${String(ep.season).padStart(2,'0')}E${String(ep.number).padStart(2,'0')}`;
-                 
-                 // === 重点：完全按照你的要求拼接 ===
-                 // 格式：01-31 S01E04 科幻
-                 displayInfoStr = `${dateStr} ${epStr} ${genreName}`;
-             } else {
-                 // Trakt 没查到，降级显示年份
-                 displayInfoStr = `${(sortDate||"").substring(0,4)} ${genreName}`;
-             }
+                    // 逻辑：优先显示 Next，没有则显示 Last
+                    if (nextEp) {
+                        sortDate = nextEp.air_date;
+                        const dateStr = formatShortDate(sortDate);
+                        const epStr = `S${String(nextEp.season_number).padStart(2,'0')}E${String(nextEp.episode_number).padStart(2,'0')}`;
+                        // 格式：01-31 S01E04 科幻
+                        displayStr = `${dateStr} ${epStr} ${genre}`;
+                    } else if (lastEp) {
+                        sortDate = lastEp.air_date;
+                        const dateStr = formatShortDate(sortDate);
+                        const epStr = `S${String(lastEp.season_number).padStart(2,'0')}E${String(lastEp.episode_number).padStart(2,'0')}`;
+                        displayStr = `${dateStr} ${epStr} ${genre}`;
+                    } else {
+                        displayStr = `${year} ${genre}`;
+                    }
+                }
+            } catch(e) {
+                displayStr = `${year} ${genre}`;
+            }
         } else {
-            // 非追更模式 (热度/电影)
-             const year = (sortDate||"").substring(0,4);
-             const rating = item.vote_average ? `${item.vote_average.toFixed(1)}分` : "";
-             displayInfoStr = `${year} ${genreName} ${rating}`;
+            // 普通模式/电影
+            const rating = item.vote_average ? `${item.vote_average.toFixed(1)}分` : "";
+            displayStr = `${year} ${genre} ${rating}`;
         }
 
         return {
             ...item,
-            _displayInfoStr: displayInfoStr, // 存下这个完美的字符串
-            _sortDate: sortDate,
-            _isFuture: (new Date(sortDate) > new Date()) // 标记是否未来
+            _displayStr: displayStr,
+            _sortDate: sortDate
         };
     }));
 
-    // === 3. 本地排序 ===
-    let finalItems = enrichedItems;
+    // === 3. 本地排序 (复刻逻辑：今天往未来排) ===
+    let finalItems = processedItems;
     
     if (sortBy === "next_episode" && contentType !== "movie") {
         finalItems.sort((a, b) => {
-            const dateA = new Date(a._sortDate).getTime();
-            const dateB = new Date(b._sortDate).getTime();
-            
-            // 简单粗暴：有明确日期信息的排前面，且时间越近越前
-            // (这里简化了逻辑，直接按时间排，因为 Trakt 返回的通常就是最相关的一集)
-            return dateA - dateB; 
+            // 字符串比对日期，效果等同于时间戳比对
+            // 综艺榜代码: return a.sortDate > b.sortDate ? 1 : -1; (升序，近->远)
+            if (a._sortDate === b._sortDate) return 0;
+            return a._sortDate > b._sortDate ? 1 : -1; 
         });
     }
 
@@ -225,42 +228,6 @@ async function loadPlatformOriginals(params) {
   }
 }
 
-// === Trakt API ===
-async function getTraktEpisodeInfo(tmdbId) {
-    try {
-        const headers = {
-            "Content-Type": "application/json",
-            "trakt-api-version": "2",
-            "trakt-api-key": TRAKT_CLIENT_ID
-        };
-
-        // 1. 查 Next
-        let nextRes = null;
-        try {
-            nextRes = await Widget.http.get(`${TRAKT_API_BASE}/shows/tmdb:${tmdbId}/next_episode?extended=full`, { headers });
-        } catch(e) {}
-
-        if (nextRes && nextRes.status === 200) {
-            const data = JSON.parse(nextRes.body || nextRes.data);
-            return { ...data, type: 'next', air_date: data.first_aired };
-        }
-
-        // 2. 查 Last
-        let lastRes = null;
-        try {
-            lastRes = await Widget.http.get(`${TRAKT_API_BASE}/shows/tmdb:${tmdbId}/last_episode?extended=full`, { headers });
-        } catch(e) {}
-
-        if (lastRes && lastRes.status === 200) {
-            const data = JSON.parse(lastRes.body || lastRes.data);
-            return { ...data, type: 'last', air_date: data.first_aired };
-        }
-        return null;
-    } catch (e) {
-        return null;
-    }
-}
-
 function buildCard(item, contentType) {
     const isMovie = contentType === "movie";
     
@@ -269,8 +236,8 @@ function buildCard(item, contentType) {
     if (item.backdrop_path) imagePath = `https://image.tmdb.org/t/p/w780${item.backdrop_path}`;
     else if (item.poster_path) imagePath = `https://image.tmdb.org/t/p/w500${item.poster_path}`;
 
-    // 直接使用上面拼接好的完美字符串
-    const displayStr = item._displayInfoStr || "";
+    // 使用拼接好的字符串
+    const displayStr = item._displayStr || "";
 
     return {
         id: String(item.id),
@@ -279,11 +246,9 @@ function buildCard(item, contentType) {
         mediaType: isMovie ? "movie" : "tv",
         title: item.name || item.title || item.original_name,
         
-        // 左下角副标题 -> 01-31 S01E04 科幻
+        // 严格执行你的要求：不带表情，格式统一
         subTitle: displayStr, 
-        
-        // 右上角标签 -> 01-31 S01E04 科幻 (完全一致)
-        genreTitle: displayStr, 
+        genreTitle: displayStr, // 右上角也显示
         
         description: item.overview || "暂无简介",
         posterPath: imagePath
