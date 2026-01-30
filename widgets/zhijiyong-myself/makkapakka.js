@@ -1,9 +1,9 @@
 WidgetMetadata = {
-  id: "gemini.platform.originals.v2.6",
-  title: "流媒体·独家原创 (复刻版)",
+  id: "gemini.platform.originals.v2.7",
+  title: "流媒体·独家原创 (严谨排序版)",
   author: "Gemini & Makkapakka",
-  description: "v2.6: 1:1复刻综艺榜逻辑。使用TMDB接口获取精准分集时间；格式严格统一为 01-31 S01E04 科幻。",
-  version: "2.6.0",
+  description: "v2.7: 修复排序逻辑。优先显示【今天及未来】的剧集，按时间正序排列；严格统一UI格式。",
+  version: "2.7.0",
   requiredVersion: "0.0.1",
   modules: [
     {
@@ -58,7 +58,7 @@ WidgetMetadata = {
             { title: "🔥 综合热度", value: "popularity.desc" },
             { title: "⭐ 最高评分", value: "vote_average.desc" },
             { title: "🆕 最新首播", value: "first_air_date.desc" },
-            { title: "📅 按更新时间 (从近到远)", value: "next_episode" },
+            { title: "📅 按更新时间 (追更模式)", value: "next_episode" },
             { title: "📆 今日播出 (每日榜单)", value: "daily_airing" }
           ],
         },
@@ -74,7 +74,7 @@ WidgetMetadata = {
 };
 
 // ==========================================
-// 题材映射表 (用于显示中文类型)
+// 题材映射表
 // ==========================================
 const GENRE_MAP = {
     10759: "动作冒险", 16: "动画", 35: "喜剧", 80: "犯罪", 99: "纪录片",
@@ -85,10 +85,9 @@ const GENRE_MAP = {
 };
 
 // ==========================================
-// 工具函数 (复刻自综艺榜代码)
+// 工具函数
 // ==========================================
 
-// 格式化日期 MM-30
 function formatShortDate(dateStr) {
     if (!dateStr) return "";
     const date = new Date(dateStr);
@@ -97,7 +96,6 @@ function formatShortDate(dateStr) {
     return `${m}-${d}`;
 }
 
-// 获取中文题材
 function getGenreName(ids) {
     if (!ids || ids.length === 0) return "";
     return GENRE_MAP[ids[0]] || "";
@@ -113,7 +111,6 @@ async function loadPlatformOriginals(params) {
   const sortBy = params.sortBy || "popularity.desc";
   const page = params.page || 1;
 
-  // 1. 基础列表查询 (Discover)
   let endpoint = "/discover/tv";
   let queryParams = {
       with_networks: networkId,
@@ -128,7 +125,7 @@ async function loadPlatformOriginals(params) {
     else if (sortBy === "next_episode" || sortBy === "daily_airing") queryParams.sort_by = "popularity.desc"; 
     else queryParams.sort_by = sortBy;
   } else {
-    // TV 类型处理
+    // TV 类型
     if (contentType === "anime") queryParams.with_genres = "16"; 
     else if (contentType === "variety") queryParams.with_genres = "10764|10767"; 
 
@@ -139,7 +136,8 @@ async function loadPlatformOriginals(params) {
         queryParams["air_date.lte"] = today;
         queryParams.sort_by = "popularity.desc";
     } else if (sortBy === "next_episode") {
-        queryParams.sort_by = "popularity.desc"; // 先取热度，后排时间
+        // 追更模式：先按热度取前20个，确保热门剧不漏，然后在本地重排
+        queryParams.sort_by = "popularity.desc";
     } else {
         if (sortBy.includes("vote_average")) queryParams["vote_count.gte"] = 100;
         queryParams.sort_by = sortBy;
@@ -154,11 +152,12 @@ async function loadPlatformOriginals(params) {
       return page === 1 ? [{ title: "暂无数据", subTitle: "尝试切换类型或平台", type: "text" }] : [];
     }
 
-    // === 2. 详情获取与格式化 (严格复刻综艺榜逻辑) ===
+    // === 2. 详情获取与格式化 ===
     
-    // 判断是否需要查详细集数 (非电影 且 (追更 or 每日))
+    // 判断是否需要查详细集数
     const needDetails = (contentType !== "movie" && (sortBy === "next_episode" || sortBy === "daily_airing"));
-    const processCount = needDetails ? 15 : 20;
+    // 增加处理数量，保证排序基数足够
+    const processCount = needDetails ? 20 : 20;
 
     const processedItems = await Promise.all(items.slice(0, processCount).map(async (item) => {
         let displayStr = ""; 
@@ -170,27 +169,31 @@ async function loadPlatformOriginals(params) {
         const genre = getGenreName(item.genre_ids);
         
         if (needDetails) {
-            // !!! 核心复刻：直接调用 TMDB 详情接口获取时间 !!!
+            // 调用 TMDB 详情接口
             try {
                 const detail = await Widget.tmdb.get(`/tv/${item.id}`, { params: { language: "zh-CN" } });
                 if (detail) {
                     const nextEp = detail.next_episode_to_air;
                     const lastEp = detail.last_episode_to_air;
 
-                    // 逻辑：优先显示 Next，没有则显示 Last
+                    // 核心显示逻辑
+                    let targetEp = null;
+                    
                     if (nextEp) {
-                        sortDate = nextEp.air_date;
+                        targetEp = nextEp;
+                    } else if (lastEp) {
+                        targetEp = lastEp;
+                    }
+
+                    if (targetEp) {
+                        sortDate = targetEp.air_date;
                         const dateStr = formatShortDate(sortDate);
-                        const epStr = `S${String(nextEp.season_number).padStart(2,'0')}E${String(nextEp.episode_number).padStart(2,'0')}`;
+                        const epStr = `S${String(targetEp.season_number).padStart(2,'0')}E${String(targetEp.episode_number).padStart(2,'0')}`;
                         // 格式：01-31 S01E04 科幻
                         displayStr = `${dateStr} ${epStr} ${genre}`;
-                    } else if (lastEp) {
-                        sortDate = lastEp.air_date;
-                        const dateStr = formatShortDate(sortDate);
-                        const epStr = `S${String(lastEp.season_number).padStart(2,'0')}E${String(lastEp.episode_number).padStart(2,'0')}`;
-                        displayStr = `${dateStr} ${epStr} ${genre}`;
                     } else {
-                        displayStr = `${year} ${genre}`;
+                        // 只有首播信息
+                        displayStr = `${formatShortDate(item.first_air_date)} 首播 ${genre}`;
                     }
                 }
             } catch(e) {
@@ -209,15 +212,35 @@ async function loadPlatformOriginals(params) {
         };
     }));
 
-    // === 3. 本地排序 (复刻逻辑：今天往未来排) ===
+    // === 3. 严谨的本地排序 (关键修复) ===
     let finalItems = processedItems;
     
     if (sortBy === "next_episode" && contentType !== "movie") {
+        const today = new Date().toISOString().split("T")[0]; // 获取今天日期 "2024-05-20"
+
         finalItems.sort((a, b) => {
-            // 字符串比对日期，效果等同于时间戳比对
-            // 综艺榜代码: return a.sortDate > b.sortDate ? 1 : -1; (升序，近->远)
-            if (a._sortDate === b._sortDate) return 0;
-            return a._sortDate > b._sortDate ? 1 : -1; 
+            const dateA = a._sortDate;
+            const dateB = b._sortDate;
+
+            // 判断是否是未来/今天
+            const isAFuture = dateA >= today;
+            const isBFuture = dateB >= today;
+
+            // 1. 未来/今天的 排在 过去/完结的 前面
+            if (isAFuture && !isBFuture) return -1; 
+            if (!isAFuture && isBFuture) return 1;
+
+            // 2. 如果都是未来/今天：按时间正序 (最近的在前: 明天 -> 后天)
+            if (isAFuture && isBFuture) {
+                if (dateA === dateB) return 0;
+                return dateA > dateB ? 1 : -1;
+            }
+
+            // 3. 如果都是过去：按时间倒序 (刚播完的在前: 昨天 -> 上周)
+            // 或者是按照综艺榜的逻辑，也是正序？
+            // 既然是“追更”，通常想看最新的。这里为了整洁，我们把刚播完的放在未来列表的紧下方。
+            if (dateA === dateB) return 0;
+            return dateB > dateA ? 1 : -1; 
         });
     }
 
@@ -246,9 +269,10 @@ function buildCard(item, contentType) {
         mediaType: isMovie ? "movie" : "tv",
         title: item.name || item.title || item.original_name,
         
-        // 严格执行你的要求：不带表情，格式统一
+        // 左下角：01-31 S01E04 科幻
         subTitle: displayStr, 
-        genreTitle: displayStr, // 右上角也显示
+        // 右上角：01-31 S01E04 科幻
+        genreTitle: displayStr, 
         
         description: item.overview || "暂无简介",
         posterPath: imagePath
