@@ -1,32 +1,39 @@
 WidgetMetadata = {
-    id: "universal_m3u_player",
-    title: "万能直播源播放器",
+    id: "universal_m3u_player_pro",
+    title: "万能直播源 (自定义版)",
     author: "Makkapakka",
-    description: "通用 M3U8/直播源播放工具。支持解析 tvg-logo、group-title，支持搜索过滤。",
-    version: "1.0.0",
+    description: "专为虎牙/B站/Twitch等网络抓取源优化。支持自定义 User-Agent 以绕过限制。",
+    version: "1.1.0",
     requiredVersion: "0.0.1",
-    site: "https://github.com/2kuai/ForwardWidgets", // 致敬原作者
+    site: "https://github.com/2kuai/ForwardWidgets",
 
     modules: [
         {
             title: "直播源列表",
             functionName: "loadM3uList",
             type: "list",
-            cacheDuration: 3600, // 缓存1小时
+            cacheDuration: 3600, 
             params: [
                 {
                     name: "m3uUrl",
                     title: "直播源链接 (.m3u)",
                     type: "input",
-                    description: "粘贴你的 M3U 订阅链接",
-                    // 默认给一个测试源 (IPTV org public)
-                    value: "https://iptv-org.github.io/iptv/countries/cn.m3u"
+                    description: "粘贴你的 M3U 链接",
+                    value: "" // 1. 移除了内置源，保持纯净
+                },
+                {
+                    name: "userAgent",
+                    title: "User-Agent (伪装)",
+                    type: "input",
+                    description: "用于绕过源服务器限制",
+                    // 2. 默认填入你提供的可用 UA
+                    value: "AptvPlayer/1.4.17" 
                 },
                 {
                     name: "keyword",
                     title: "搜索/过滤",
                     type: "input",
-                    description: "输入频道名或分组名进行筛选 (可选)"
+                    description: "筛选频道名或分组"
                 },
                 {
                     name: "page",
@@ -43,32 +50,44 @@ WidgetMetadata = {
 // =========================================================================
 
 async function loadM3uList(params = {}) {
-    const { m3uUrl, keyword, page = 1 } = params;
+    const { m3uUrl, keyword, userAgent = "AptvPlayer/1.4.17", page = 1 } = params;
 
     if (!m3uUrl) {
         return [{ id: "tip", type: "text", title: "请先填写直播源链接" }];
     }
 
     try {
-        // 1. 获取 M3U 内容
-        // 增加 User-Agent 防止部分源拒绝访问
+        // 3. 关键修复：在下载 M3U 文件时就带上伪装 UA
+        // 之前这里是 Chrome UA，导致被服务器拒绝，所以你获取不到列表
         const res = await Widget.http.get(m3uUrl, {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" }
+            headers: { 
+                "User-Agent": userAgent 
+            }
         });
 
         const content = res.data || res || "";
+        
+        // 增加容错判断
         if (!content || typeof content !== "string") {
-            return [{ id: "err", type: "text", title: "获取失败", subTitle: "返回数据为空或格式错误" }];
+            // 有些源返回 JSON 或其他格式，这里做个简单检查
+            return [{ id: "err", type: "text", title: "解析失败", subTitle: "源返回数据为空或非文本格式" }];
         }
 
-        // 2. 解析 M3U
+        // 4. 解析 M3U
         let channels = parseM3uPlus(content);
 
         if (channels.length === 0) {
-            return [{ id: "empty", type: "text", title: "未解析到频道", subTitle: "请检查链接内容格式" }];
+            // 尝试解析纯 URL 列表 (防止某些源没有 #EXTINF)
+            if (content.includes("http")) {
+                 channels = parseSimpleList(content);
+            }
+            
+            if (channels.length === 0) {
+                return [{ id: "empty", type: "text", title: "未解析到频道", subTitle: "请检查链接是否有效或受访问限制" }];
+            }
         }
 
-        // 3. 过滤 (搜索频道名 或 分组名)
+        // 5. 过滤 (搜索)
         if (keyword) {
             const lowerKw = keyword.toLowerCase();
             channels = channels.filter(ch => 
@@ -77,39 +96,38 @@ async function loadM3uList(params = {}) {
             );
         }
 
-        // 4. 分页处理 (本地分页)
+        // 6. 分页处理
         const pageSize = 20;
         const total = channels.length;
         const start = (page - 1) * pageSize;
         const end = start + pageSize;
         
-        // 如果分页越界
         if (start >= total) return [];
 
         const pageItems = channels.slice(start, end);
 
-        // 5. 构建 Forward Item
+        // 7. 构建 Forward Item
         return pageItems.map(ch => {
-            // 构造副标题：显示分组信息
             let sub = "";
             if (ch.group) sub += `📂 ${ch.group}`;
             
+            // 虎牙/B站抓取的源通常没有 logo，给个默认图标美化一下
+            const defaultLogo = "https://img.icons8.com/color/144/000000/tv-show.png";
+            
             return {
-                id: ch.url, //以此 URL 为唯一 ID
-                
-                // === 关键点：调用原生播放器 ===
+                id: ch.url, 
                 type: "url", 
                 videoUrl: ch.url, 
                 
-                title: ch.name || "未知频道",
+                title: ch.name || "未知直播间",
                 subTitle: sub,
-                posterPath: ch.logo || "", // 显示台标
+                posterPath: ch.logo || defaultLogo, 
                 description: `分组: ${ch.group || "默认"}\n地址: ${ch.url}`,
                 
-                // 模拟 headers，有些源需要 Referer
+                // 8. 关键修复：播放时也带上这个 UA
                 customHeaders: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer": m3uUrl
+                    "User-Agent": userAgent,
+                    "Referer": m3uUrl // 部分源还需要 Referer
                 }
             };
         });
@@ -120,7 +138,7 @@ async function loadM3uList(params = {}) {
 }
 
 // =========================================================================
-// 2. M3U 解析器 (增强版)
+// 2. M3U 解析器 (兼容性增强)
 // =========================================================================
 
 function parseM3uPlus(content) {
@@ -132,47 +150,60 @@ function parseM3uPlus(content) {
         line = line.trim();
         if (!line) continue;
 
-        // 处理 #EXTINF 行
         if (line.startsWith('#EXTINF:')) {
             currentChannel = {};
             
-            // 1. 提取 logo (tvg-logo="...")
+            // 提取 logo
             const logoMatch = line.match(/tvg-logo="([^"]*)"/);
             if (logoMatch) currentChannel.logo = logoMatch[1];
 
-            // 2. 提取分组 (group-title="...")
+            // 提取分组
             const groupMatch = line.match(/group-title="([^"]*)"/);
             if (groupMatch) currentChannel.group = groupMatch[1];
 
-            // 3. 提取频道名称 (逗号后面的部分)
+            // 提取名称 (逗号后)
             const nameMatch = line.match(/,([^,]*)$/);
             if (nameMatch) {
                 currentChannel.name = nameMatch[1].trim();
             } else {
-                // 某些格式可能是 #EXTINF:-1 频道名
-                // 简单处理：去掉所有属性，取最后
-                // 这里做一个简单的 fallback
+                // 兜底：取最后一段
                 const parts = line.split(',');
                 if (parts.length > 1) currentChannel.name = parts[parts.length - 1].trim();
             }
         } 
-        // 处理 URL 行 (非 # 开头)
         else if (!line.startsWith('#')) {
+            // 是 URL 行
             if (currentChannel) {
                 currentChannel.url = line;
                 channels.push(currentChannel);
-                currentChannel = null; // 重置，准备读取下一个
+                currentChannel = null;
             } else {
-                // 如果没有 EXTINF 信息，直接把 URL 当作一个频道
-                // 这种情况比较少见，或者是 m3u 的第一行
+                // 没有 EXTINF 头的裸 URL (容错)
                 if (line.startsWith('http') || line.startsWith('rtmp') || line.startsWith('rtsp')) {
                      channels.push({
-                         name: "未知频道",
+                         name: "直播频道",
                          url: line,
                          group: "未分类"
                      });
                 }
             }
+        }
+    }
+    return channels;
+}
+
+// 简单列表解析 (针对非标准 M3U)
+function parseSimpleList(content) {
+    const lines = content.split('\n');
+    const channels = [];
+    for (let line of lines) {
+        line = line.trim();
+        if (line.startsWith('http') || line.startsWith('rtmp')) {
+            channels.push({
+                name: "直播频道",
+                url: line,
+                group: "自动识别"
+            });
         }
     }
     return channels;
