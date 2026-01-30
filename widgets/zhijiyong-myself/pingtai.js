@@ -1,9 +1,9 @@
 WidgetMetadata = {
-  id: "gemini.platform.originals.v2.7",
+  id: "makka.platform.originals",
   title: "流媒体·独家原创（更新时间版）",
-  author: "Makkapakka",
-  description: "各平台独家剧",
-  version: "2.7.0",
+  author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
+  description: "各平台独播剧",
+  version: "1.0.5",
   requiredVersion: "0.0.1",
   modules: [
     {
