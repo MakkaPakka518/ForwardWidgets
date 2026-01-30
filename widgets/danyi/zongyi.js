@@ -1,5 +1,5 @@
 WidgetMetadata = {
-    id: "variety_hub_ultimate_v4_fix",
+    id: "variety_ultimate_v4",
     title: "全球综艺追更热度榜",
     author: "𝙈𝙖𝙠𝙠𝙖𝙋𝙖𝙠𝙠𝙖",
     description: "综艺更新时间表，热度榜",
