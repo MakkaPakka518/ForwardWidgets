@@ -1,8 +1,8 @@
 WidgetMetadata = {
   id: "gemini.platform.originals.v2.7",
-  title: "流媒体·独家原创 (严谨排序版)",
-  author: "Gemini & Makkapakka",
-  description: "v2.7: 修复排序逻辑。优先显示【今天及未来】的剧集，按时间正序排列；严格统一UI格式。",
+  title: "流媒体·独家原创（更新时间版）",
+  author: "Makkapakka",
+  description: "各平台独家剧",
   version: "2.7.0",
   requiredVersion: "0.0.1",
   modules: [
