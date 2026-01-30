@@ -1,9 +1,9 @@
 var WidgetMetadata = {
-  id: "trakt_global_pro",
-  title: "全球剧集榜单 (Pro)",
+  id: "trakt_global_final",
+  title: "全球剧集榜单 (稳定版)",
   author: "Makkapakka",
-  description: "Trakt 数据源。支持无限分页、上映日期显示、混合排序。已修复资源匹配问题。",
-  version: "1.0.3",
+  description: "修复一切报错。支持Trakt热榜、分页、详细副标题。",
+  version: "1.0.4",
   requiredVersion: "0.0.1",
   site: "https://trakt.tv",
   
@@ -12,7 +12,7 @@ var WidgetMetadata = {
       name: "client_id",
       title: "Trakt Client ID",
       type: "input",
-      description: "留空使用内置 ID，如有自己的 ID 建议填入。",
+      description: "留空则使用内置ID。",
       value: "" 
     }
   ],
@@ -20,7 +20,7 @@ var WidgetMetadata = {
   modules: [
     {
       title: "影视榜单",
-      description: "查看热门电影/剧集",
+      description: "浏览热门影视",
       requiresWebView: false,
       functionName: "loadRankings",
       type: "list",
@@ -38,8 +38,7 @@ var WidgetMetadata = {
             { title: "🇰🇷 韩国 (KR)", value: "kr" },
             { title: "🇯🇵 日本 (JP)", value: "jp" },
             { title: "🇭🇰 香港 (HK)", value: "hk" },
-            { title: "🇬🇧 英国 (GB)", value: "gb" },
-            { title: "🇹🇼 台湾 (TW)", value: "tw" }
+            { title: "🇬🇧 英国 (GB)", value: "gb" }
           ]
         },
         {
@@ -61,11 +60,9 @@ var WidgetMetadata = {
           enumOptions: [
             { title: "🔥 正在热播 (Trending)", value: "trending" },
             { title: "❤️ 最受欢迎 (Popular)", value: "popular" },
-            { title: "👁️ 观看最多 (Played)", value: "played" },
             { title: "🆕 最受期待 (Anticipated)", value: "anticipated" }
           ]
         },
-        // ✅ 分页功能
         {
           name: "from",
           title: "页码",
@@ -83,7 +80,6 @@ var WidgetMetadata = {
 
 const DEFAULT_CLIENT_ID = "95b59922670c84040db3632c7aac6f33704f6ffe5cbf3113a056e37cb45cb482";
 const API_BASE = "https://api.trakt.tv";
-const PAGE_SIZE = 20;
 
 // ===========================
 // 主逻辑
@@ -98,7 +94,6 @@ async function loadRankings(params) {
 
   let requests = [];
   
-  // 混合模式：并发请求电影和剧集
   if (type === "all" || type === "movies") {
     requests.push(fetchTrakt(clientId, "movies", sort, region, page));
   }
@@ -109,11 +104,10 @@ async function loadRankings(params) {
 
   try {
     const results = await Promise.all(requests);
-    
-    // 数据合并策略
     let allItems = [];
+
+    // 混合排序逻辑
     if (type === "all" && results.length === 2) {
-      // 电影和剧集穿插排列，避免前20个全是电影
       const [movies, shows] = results;
       const maxLen = Math.max(movies.length, shows.length);
       for (let i = 0; i < maxLen; i++) {
@@ -126,13 +120,13 @@ async function loadRankings(params) {
 
     if (allItems.length === 0) {
       if (page > 1) return [{ title: "没有更多内容了", type: "text" }];
-      return [{ title: "列表为空", subTitle: "请检查网络或更换地区", type: "text" }];
+      return [{ title: "列表为空", subTitle: "请检查网络或Client ID", type: "text" }];
     }
 
     return allItems;
 
   } catch (e) {
-    return [{ title: "加载失败", subTitle: e.message, type: "text" }];
+    return [{ title: "发生错误", subTitle: String(e.message), type: "text" }];
   }
 }
 
@@ -141,11 +135,10 @@ async function loadRankings(params) {
 // ===========================
 
 async function fetchTrakt(clientId, mediaType, sort, region, page) {
-  // 构造 API 地址
-  // extended=full 是为了获取年份和发布日期
-  let url = `${API_BASE}/${mediaType}/${sort}?limit=${PAGE_SIZE}&page=${page}&extended=full`;
+  // 1. 预先定义类型标签，防止后续报错
+  const typeLabel = mediaType === "movies" ? "电影" : "剧集";
   
-  // 只有部分接口支持地区过滤，Trakt 官方规定 trending/popular 支持
+  let url = `${API_BASE}/${mediaType}/${sort}?limit=20&page=${page}&extended=full`;
   if (region && region !== "global") {
     url += `&countries=${region}`;
   }
@@ -159,72 +152,46 @@ async function fetchTrakt(clientId, mediaType, sort, region, page) {
       }
     });
 
-    // 错误检查
-    if (!res || (res.status && res.status >= 400)) {
-        console.log("Trakt API Error: " + url);
-        return [];
-    }
-
     const data = JSON.parse(res.body || res.data);
     if (!Array.isArray(data)) return [];
 
     return data.map(item => {
-      // 🔄 数据结构适配器
-      // 场景 A: 列表返回 { movie: {...}, watchers: 123 }
-      // 场景 B: 列表返回 { ...movieObject } (Popular 接口)
-      
+      // 2. 数据清洗
       let subject = null;
-      // 移除末尾的s，转为单数 (movies -> movie)
-      const singularType = mediaType.slice(0, -1); 
+      const singularKey = mediaType === "movies" ? "movie" : "show";
       
-      if (item[singularType]) {
-        subject = item[singularType];
+      if (item[singularKey]) {
+        subject = item[singularKey];
       } else if (item.ids) {
-        // 如果外层直接有 ids，说明结构是场景 B
         subject = item;
       }
 
-      // 🛡️ 防御性编程：没有 TMDB ID 就跳过，否则点进去会报错
+      // 3. 安全检查：如果缺数据，直接跳过
       if (!subject || !subject.ids || !subject.ids.tmdb) return null;
 
-      // === 构造你要求的副标题 ===
-      // 格式：[电影] 📅 2023-11-25
-      const typeLabel = mediaType === "movies" ? "电影" : "剧集";
-      let dateStr = "待定";
-      
-      if (mediaType === "movies") {
-        dateStr = subject.released || subject.year || "";
-      } else {
-        // 剧集优先显示首播时间
-        dateStr = subject.first_aired || subject.year || "";
+      // 4. 构建日期副标题
+      let dateStr = "未知日期";
+      const rawDate = subject.released || subject.first_aired || subject.year;
+      if (rawDate) {
+         dateStr = String(rawDate).substring(0, 10);
       }
-      // 只取日期部分 YYYY-MM-DD
-      if (dateStr.length > 10) dateStr = dateStr.substring(0, 10);
       
-      const subTitleText = `[${typeLabel}] 📅 ${dateStr}`;
+      const finalSubTitle = `[${typeLabel}] 📅 ${dateStr}`;
 
       return {
-        // 🆔 确保 ID 唯一
         id: `trakt_${mediaType}_${subject.ids.tmdb}`,
-        
-        // 📺 核心：指定类型为 tmdb
-        type: "tmdb", 
-        // 必须转为数字，否则部分系统匹配不到资源
-        tmdbId: parseInt(subject.ids.tmdb), 
-        // 告诉 Forward 这是电影还是剧集
-        mediaType: mediaType === "movies" ? "movie" : "tv", 
-        
+        type: "tmdb",
+        tmdbId: parseInt(subject.ids.tmdb), // 确保是数字
+        mediaType: mediaType === "movies" ? "movie" : "tv",
         title: subject.title,
-        subTitle: subTitleText, // ✅ 你要求的格式
-        description: subject.overview || "暂无简介",
-        
-        // 封面图：留空，让 Forward 通过 tmdbId 自动去匹配高清海报
-        posterPath: "" 
+        subTitle: finalSubTitle,
+        description: subject.overview || "",
+        posterPath: "" // 让 Forward 自动加载
       };
-    }).filter(item => item !== null); // 过滤无效项
+    }).filter(Boolean); // 过滤掉 null
     
   } catch (e) {
-    console.log("Parse Error: " + e.message);
+    // 静默失败，返回空数组以免炸掉整个页面
     return [];
   }
 }
