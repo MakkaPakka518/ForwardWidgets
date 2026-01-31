@@ -1,263 +1,212 @@
-// ============================================
-// 豆瓣同步 & 追更 (Forward 规范修复版)
-// ============================================
+// =======================================================
+// 模块名称：流媒体 & Trakt 热榜 (基石版 v1.0)
+// 作者：Gemini
+// 功能：提供 Netflix/Disney+ 及 Trakt 的实时热度榜
+// =======================================================
 
 WidgetMetadata = {
-  // 使用唯一ID，避免冲突
-  id: "douban_sync_strict_v1",
-  title: "豆瓣同步 & 追更",
+  id: "stream_trakt_hub_basic", // 唯一ID，防止冲突
+  title: "流媒体 & Trakt 热榜",
   author: "Gemini",
-  description: "基于豆瓣数据，支持按TMDB剧集更新时间排序。",
-  // 核心版本号
+  description: "第一阶段测试：包含 Trakt 趋势与主流流媒体热榜。",
   version: "1.0.0",
-  // 必须声明模块
+  // 核心：必须声明 type: 'list'
   modules: [
     {
-      title: "豆瓣片单",
-      type: "list", // 【关键修复】必须明确指定类型为 list
-      functionName: "loadDoubanList", // 函数名必须与下方定义完全一致
-      requiresWebView: false, 
-      cacheDuration: 3600,
+      title: "热榜聚合",
+      type: "list", 
+      functionName: "loadRankingHub",
+      requiresWebView: false,
+      cacheDuration: 3600, // 缓存1小时
       params: [
         {
-          name: "user_id",
-          title: "豆瓣 ID (必填)",
-          type: "input",
-          defaultValue: "", 
-          description: "数字ID或个性域名"
-        },
-        {
-          name: "status",
-          title: "筛选状态",
+          name: "source",
+          title: "选择榜单源",
           type: "enumeration",
-          defaultValue: "mark",
+          defaultValue: "trakt_trend",
           enumOptions: [
-            { title: "想看 (Mark)", value: "mark" },
-            { title: "在看 (Doing)", value: "doing" },
-            { title: "看过 (Done)", value: "done" }
+            { title: "🌍 Trakt 实时趋势", value: "trakt_trend" },
+            { title: "🟥 Netflix (网飞)", value: "netflix" },
+            { title: "🟦 Disney+ (迪士尼)", value: "disney" },
+            { title: "🍏 Apple TV+", value: "apple" },
+            { title: "🦁 HBO / Max", value: "hbo" }
           ]
         },
         {
-          name: "sort_mode",
-          title: "排序模式",
+          name: "media_type",
+          title: "媒体类型",
           type: "enumeration",
-          defaultValue: "default",
+          defaultValue: "tv",
           enumOptions: [
-            { title: "📌 默认 (豆瓣原序)", value: "default" },
-            { title: "📅 按更新时间 (追更)", value: "update" },
-            { title: "🆕 按上映年份", value: "release" }
+            { title: "📺 剧集 (TV)", value: "tv" },
+            { title: "🎬 电影 (Movie)", value: "movie" }
           ]
-        },
-        {
-            name: "page",
-            title: "页码",
-            type: "page"
         }
       ]
     }
   ]
 };
 
-// ============================================
-// 核心逻辑
-// ============================================
+// =======================================================
+// 1. 核心常量
+// =======================================================
 
-// 提取 Headers 常量，模拟真实用户
-const DB_HEADERS = {
-  "Referer": "https://m.douban.com/movie",
-  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+// Trakt 公用 Client ID (借用自您的旧脚本)
+const TRAKT_CLIENT_ID = "95b59922670c84040db3632c7aac6f33704f6ffe5cbf3113a056e37cb45cb482";
+
+// 流媒体对应的 TMDB Network ID
+const NETWORK_IDS = {
+  "netflix": "213",
+  "disney": "2739",
+  "apple": "2552",
+  "hbo": "49"  // HBO
 };
 
-async function loadDoubanList(params) {
-  // 1. 安全检查：如果没有参数，防止崩溃
-  const userId = params.user_id;
-  const status = params.status || "mark";
-  const sortMode = params.sort_mode || "default";
-  const page = params.page || 1;
+// =======================================================
+// 2. 主逻辑入口 (绝对不能抛出异常)
+// =======================================================
 
-  // 2. 如果未填写 ID，返回引导卡片 (不要抛出 Error)
-  if (!userId) {
-    return [{
-      id: "guide_card",
-      type: "text",
-      title: "请配置豆瓣 ID",
-      subTitle: "点击右上角编辑组件参数"
-    }];
-  }
-
-  // 3. 构造请求
-  // 注意：params 必须和原脚本保持一致 (ck=, for_mobile=1)
-  const count = 15;
-  const start = (page - 1) * count;
-  const url = `https://m.douban.com/rexxar/api/v2/user/${userId}/interests?type=${status}&count=${count}&order_by=time&start=${start}&ck=&for_mobile=1`;
-
+async function loadRankingHub(params) {
   try {
-    // 发起请求
-    const res = await Widget.http.get(url, { headers: DB_HEADERS });
+    const source = params.source || "trakt_trend";
+    const type = params.media_type || "tv";
+
+    // A. 如果选的是 Trakt
+    if (source === "trakt_trend") {
+      return await fetchTraktTrending(type);
+    } 
     
-    // 解析数据 (处理可能的 String 或 Object 返回)
-    let data = res.data || res.body;
-    if (typeof data === "string") {
-        try { data = JSON.parse(data); } catch(e) {}
+    // B. 如果选的是流媒体 (走 TMDB)
+    else {
+      const netId = NETWORK_IDS[source];
+      return await fetchStreamingHot(type, netId);
     }
-
-    // 豆瓣错误处理
-    if (!data || data.msg === "user_not_found") {
-        return [{ id: "err_user", type: "text", title: "用户不存在", subTitle: "请检查ID是否填写正确" }];
-    }
-    
-    const interests = data.interests || [];
-    if (interests.length === 0) {
-        return [{ id: "empty", type: "text", title: "列表为空", subTitle: "没有更多数据了" }];
-    }
-
-    // 4. 初步处理数据 (映射为标准对象)
-    let items = interests.map(i => {
-        const subject = i.subject || {};
-        // 封面图处理
-        const poster = subject.pic?.large || subject.pic?.normal || subject.cover_url || "";
-        
-        return {
-            doubanId: subject.id,
-            title: subject.title,
-            original_title: subject.original_title,
-            year: subject.year,
-            rating: subject.rating?.value,
-            pic: poster,
-            type: subject.type === "movie" ? "movie" : "tv",
-            comment: i.comment,
-            // 默认排序字段
-            sortDate: "1900-01-01",
-            displayInfo: ""
-        };
-    });
-
-    // 5. 如果开启了排序，进行 TMDB 增强
-    if (sortMode !== "default") {
-        items = await enrichItems(items, sortMode);
-        
-        // 执行排序
-        items.sort((a, b) => {
-            if (a.sortDate === b.sortDate) return 0;
-            // 倒序：时间晚的在前面
-            return a.sortDate < b.sortDate ? 1 : -1;
-        });
-    }
-
-    // 6. 返回最终卡片数组
-    return items.map(item => buildCard(item, sortMode));
 
   } catch (e) {
-    // 最后的防线：发生网络错误时不崩坏，返回错误卡片
+    // 全局兜底：无论发生什么，返回错误卡片
     console.error(e);
-    return [{
-        id: "error_net",
-        type: "text",
-        title: "请求失败",
-        subTitle: e.message || "请检查网络"
-    }];
+    return [createErrorCard("系统错误", e.message)];
   }
 }
 
-// ============================================
-// 辅助功能：数据增强
-// ============================================
+// =======================================================
+// 3. 分支逻辑：获取 Trakt 数据
+// =======================================================
 
-async function enrichItems(items, sortMode) {
-    // 使用 Promise.all 并发处理，必须捕获内部错误
-    const tasks = items.map(async (item) => {
-        try {
-            // A. 搜索 TMDB
-            const searchRes = await Widget.tmdb.search(item.title, item.type, { language: "zh-CN" });
-            const results = searchRes.results || [];
-            
-            // B. 简单匹配 (年份校对)
-            let match = null;
-            if (results.length > 0) {
-                const targetYear = parseInt(item.year);
-                match = results.find(r => {
-                    const rDate = r.first_air_date || r.release_date || "1900";
-                    const rYear = parseInt(rDate.substring(0, 4));
-                    return Math.abs(rYear - targetYear) <= 2;
-                });
-                if (!match) match = results[0];
-            }
+async function fetchTraktTrending(type) {
+  // Trakt API: shows/trending 或 movies/trending
+  // map: tv -> shows, movie -> movies
+  const traktType = type === "tv" ? "shows" : "movies";
+  const url = `https://api.trakt.tv/${traktType}/trending?limit=20&extended=full`;
 
-            if (match) {
-                item.tmdbId = match.id;
-                
-                // C. 获取具体日期
-                if (item.type === "tv" && sortMode === "update") {
-                    // 剧集追更模式
-                    const detail = await Widget.tmdb.get(`/tv/${match.id}`, { params: { language: "zh-CN" } });
-                    const nextEp = detail.next_episode_to_air;
-                    const lastEp = detail.last_episode_to_air;
+  const headers = {
+    "Content-Type": "application/json",
+    "trakt-api-version": "2",
+    "trakt-api-key": TRAKT_CLIENT_ID
+  };
 
-                    if (nextEp) {
-                        item.sortDate = nextEp.air_date;
-                        item.displayInfo = `🔜 ${formatDate(nextEp.air_date)} S${nextEp.season_number}E${nextEp.episode_number}`;
-                    } else if (lastEp) {
-                        item.sortDate = lastEp.air_date;
-                        item.displayInfo = `🔥 ${formatDate(lastEp.air_date)} S${lastEp.season_number}E${lastEp.episode_number}`;
-                    } else {
-                        item.sortDate = detail.first_air_date || "1900-01-01";
-                    }
-                } else {
-                    // 电影或上映模式
-                    item.sortDate = match.release_date || match.first_air_date || "1900-01-01";
-                    item.displayInfo = sortMode === "release" ? `📅 ${item.sortDate}` : "";
-                }
-            }
-        } catch (ignored) {
-            // 单个条目失败不影响整体
-        }
-        return item;
-    });
-
-    return Promise.all(tasks);
-}
-
-// ============================================
-// UI 构建
-// ============================================
-
-function buildCard(item, sortMode) {
-    let sub = "";
-    let genre = "";
-
-    // 根据模式决定显示内容
-    if (sortMode !== "default" && item.displayInfo) {
-        sub = item.displayInfo;
-        genre = item.rating ? `⭐${item.rating}` : item.year;
-    } else {
-        // 默认模式
-        sub = item.comment ? `💬 ${item.comment}` : (item.original_title || "");
-        genre = item.rating ? `豆瓣 ${item.rating}` : item.year;
+  try {
+    const res = await Widget.http.get(url, { headers: headers });
+    
+    // 解析 JSON (兼容处理)
+    let data = res.body || res.data;
+    if (typeof data === "string") {
+      try { data = JSON.parse(data); } catch(e) { throw new Error("Trakt 数据解析失败"); }
     }
 
-    return {
-        id: String(item.doubanId), // 必须是字符串
+    if (!Array.isArray(data)) {
+      return [createErrorCard("Trakt 异常", "返回数据不是数组")];
+    }
+
+    // 格式化数据
+    return data.map(item => {
+      // Trakt Trending 返回结构是 { watchers: 123, movie: { ... } }
+      const core = item[traktType.slice(0, -1)]; // movie 或 show
+      const tmdbId = core.ids.tmdb; // 关键：获取 TMDB ID
+
+      return {
+        id: `trakt_${core.ids.trakt}`,
+        // 只有拿到 TMDB ID，才能在 App 内点击跳转详情
+        tmdbId: tmdbId || null, 
+        type: tmdbId ? "tmdb" : "web", 
+        mediaType: type, 
         
-        // 关键跳转逻辑：
-        // 有 tmdbId -> type="tmdb" (App原生详情)
-        // 无 tmdbId -> type="web" (跳转豆瓣网页)
-        type: item.tmdbId ? "tmdb" : "web",
-        tmdbId: item.tmdbId || null,
-        mediaType: item.type,
+        title: core.title,
+        subTitle: `🔥 ${item.watchers} 人正在看`,
+        genreTitle: core.year ? String(core.year) : "",
         
-        title: item.title,
-        subTitle: sub,
-        genreTitle: String(genre),
+        // Trakt 自身不返回图片，这里只能先暂时留空或者依赖 App 自动通过 TMDB ID 补全
+        // 为了稳健，我们先不通过复杂的逻辑去查图，
+        // 只有当 type="tmdb" 时，App 会尝试自动补全海报（取决于 App 版本）
+        // 如果需要显示图片，后续版本我们可以加一步 TMDB 查图
+        posterPath: "", 
+        description: core.overview || "",
         
-        posterPath: item.pic,
-        description: item.original_title || "",
-        
-        url: `https://m.douban.com/${item.type}/${item.doubanId}/`
-    };
+        url: `https://trakt.tv/${traktType}/${core.ids.slug}`
+      };
+    });
+
+  } catch (e) {
+    return [createErrorCard("Trakt 请求失败", e.message)];
+  }
 }
 
-// 日期格式化 (2024-02-01 -> 02-01)
-function formatDate(str) {
-    if (!str) return "";
-    return str.substring(5);
+// =======================================================
+// 4. 分支逻辑：获取流媒体数据 (TMDB)
+// =======================================================
+
+async function fetchStreamingHot(type, networkId) {
+  // 使用 Forward 内置的 Widget.tmdb.get，自动处理 Key
+  const endpoint = `/discover/${type}`;
+  const params = {
+    "with_networks": networkId,
+    "sort_by": "popularity.desc",
+    "vote_count.gte": "100", // 过滤掉太冷门的
+    "language": "zh-CN",
+    "page": "1"
+  };
+
+  try {
+    const data = await Widget.tmdb.get(endpoint, { params: params });
+    const results = data.results || [];
+
+    if (results.length === 0) {
+      return [createErrorCard("无数据", "该分类下暂时没有热门内容")];
+    }
+
+    return results.map(item => {
+      const title = item.title || item.name;
+      const orgTitle = item.original_title || item.original_name;
+      
+      return {
+        id: String(item.id),
+        tmdbId: item.id,
+        type: "tmdb",
+        mediaType: type,
+        
+        title: title,
+        subTitle: orgTitle !== title ? orgTitle : "",
+        genreTitle: item.vote_average ? `⭐${item.vote_average.toFixed(1)}` : "",
+        
+        posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : "",
+        description: item.overview || "暂无简介"
+      };
+    });
+
+  } catch (e) {
+    return [createErrorCard("TMDB 连接失败", "请检查网络设置或API Key")];
+  }
+}
+
+// =======================================================
+// 5. 辅助工具
+// =======================================================
+
+function createErrorCard(title, subTitle) {
+  return {
+    id: "error_card",
+    type: "text", // 纯文本卡片，绝对安全
+    title: `❌ ${title}`,
+    subTitle: subTitle
+  };
 }
