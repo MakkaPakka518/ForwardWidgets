@@ -1,97 +1,114 @@
 /**
- * 演示：动态副标题逻辑
- * 首页：横版 (16:9) -> "2026 · 科幻"
- * 榜单：竖版 (3:4) -> "2026-01-31"
+ * TMDB 动态榜单插件
+ * 实现横竖版副标题自动切换
  */
 
-// 1. 定义常量以防未定义错误
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 var WidgetMetadata = {
-  id: "dynamic_subtitle_pro",
-  title: "动态 UI 演示",
+  id: "tmdb_dynamic_list",
+  title: "TMDB 动态榜单",
+  description: "支持横竖版切换的 TMDB 实时数据源",
   author: "Gemini",
-  version: "1.0.1",
+  version: "1.0.2",
   requiredVersion: "0.0.1",
   
   modules: [
     {
-      title: "首页精选 (横版)",
-      functionName: "loadHome",
+      title: "近期热门 (横版封面)",
+      functionName: "loadTrendingHome",
       type: "video"
     },
     {
-      title: "热播榜单 (竖版)",
-      functionName: "loadRank",
-      type: "video"
+      title: "电影排行 (竖版海报)",
+      functionName: "loadMovieRanking",
+      type: "video",
+      params: [
+        { name: "page", title: "页码", type: "page", startPage: 1 }
+      ]
     }
   ]
 };
 
 // --- 模块入口 ---
 
-async function loadHome(params) {
-  // 模拟从某个接口获取数据
-  const list = getMockData();
-  // 传入 1.77 触发 "年份 · 类型" 副标题
-  return formatVideoList(list, 1.77);
+/**
+ * 首页：展示本周热门（横版 UI）
+ */
+async function loadTrendingHome(params) {
+  try {
+    // 调用 TMDB 内置 API 获取本周全平台趋势
+    const response = await Widget.tmdb.get("trending/all/week", {
+      params: { language: "zh-CN" }
+    });
+    
+    // 强制指定 1.77 比例（横版）
+    return formatTmdbList(response.results, 1.77);
+  } catch (e) {
+    console.error("加载热门失败: " + e.message);
+    return [];
+  }
 }
 
-async function loadRank(params) {
-  const list = getMockData();
-  // 传入 0.75 触发 "具体年月日" 副标题
-  return formatVideoList(list, 0.75);
+/**
+ * 榜单页：展示高分电影（竖版 UI）
+ */
+async function loadMovieRanking(params) {
+  try {
+    const { page = 1 } = params;
+    // 调用 TMDB 内置 API 获取高分电影
+    const response = await Widget.tmdb.get("movie/top_rated", {
+      params: { 
+        language: "zh-CN",
+        page: page 
+      }
+    });
+    
+    // 强制指定 0.75 比例（竖版）
+    return formatTmdbList(response.results, 0.75);
+  } catch (e) {
+    console.error("加载榜单失败: " + e.message);
+    return [];
+  }
 }
 
-// --- 核心格式化逻辑 (参考热门精选.js) ---
+// --- 核心格式化逻辑 (关键：副标题处理) ---
 
-function formatVideoList(data, ratio) {
-  if (!data || !Array.isArray(data)) return [];
+function formatTmdbList(results, ratio) {
+  if (!results || !Array.isArray(results)) return [];
 
-  return data.map(item => {
-    // 处理日期
-    const dateStr = item.date || "2026-01-01";
-    const year = dateStr.split('-')[0];
-    const category = item.type || "电影";
+  return results.map(item => {
+    // 1. 提取基础信息
+    const title = item.title || item.name || "未知标题";
+    const dateStr = item.release_date || item.first_air_date || "2026-01-01";
+    const year = dateStr.split("-")[0];
+    
+    // 2. 媒体类型处理 (TMDB 返回的 genre_ids 转换为简易文字)
+    const mediaTypeText = item.media_type === "tv" ? "剧集" : "电影";
 
-    // 副标题切换逻辑
-    let displayDesc = "";
+    // 3. 关键逻辑：根据 ratio 动态计算副标题 (description)
+    let displaySubTitle = "";
     if (ratio > 1) {
-      // 横版布局：2026 · 科幻
-      displayDesc = `${year} · ${category}`;
+      // 横版布局 (首页)：年份 · 类型 (例如: 2026 · 电影)
+      displaySubTitle = `${year} · ${mediaTypeText}`;
     } else {
-      // 竖版布局：2026-01-31
-      displayDesc = dateStr;
+      // 竖版布局 (榜单)：具体年月日 (例如: 2026-01-31)
+      displaySubTitle = dateStr;
     }
 
     return {
       id: item.id.toString(),
-      title: item.title,
-      description: displayDesc, // 赋给副标题
-      coverUrl: item.cover,
+      type: "tmdb", // 使用内置 tmdb 类型自动加载详情
+      title: title,
+      description: displaySubTitle, // 设置副标题
+      
+      // 根据 ratio 选择封面图类型
+      coverUrl: ratio > 1 ? item.backdrop_path : item.poster_path,
       coverRatio: ratio,
-      type: "link",
-      link: "https://example.com/detail/" + item.id
+      
+      rating: item.vote_average,
+      releaseDate: dateStr,
+      mediaType: (item.media_type === "tv" || item.name) ? "tv" : "movie"
     };
   });
-}
-
-// 模拟数据源
-function getMockData() {
-  return [
-    {
-      id: "9527",
-      title: "星际穿越续作",
-      date: "2026-01-31",
-      type: "科幻",
-      cover: "https://p.pstatp.com/origin/1376d0001088661642236"
-    },
-    {
-      id: "9528",
-      title: "最后的人类",
-      date: "2026-02-15",
-      type: "剧情",
-      cover: "https://p.pstatp.com/origin/137a60000bd962f3ec051"
-    }
-  ];
 }
