@@ -1,22 +1,25 @@
-// 核心配置：定义组件信息
+// ==========================================
+// 豆瓣同步 & 追更排序 (独立复刻版)
+// ==========================================
 WidgetMetadata = {
-  id: "douban_pro_standalone_v1",
-  title: "豆瓣我看 (Pro独立版)",
+  id: "douban_sync_pro_standalone",
+  title: "豆瓣同步 & 追更排序",
   author: "Gemini",
-  description: "独立运行的豆瓣增强组件。支持按【剧集更新时间】和【首播年份】重新排序。",
-  // 图标建议使用 douban 或 movie
+  description: "复刻原版豆瓣接口抓取逻辑，增加按剧集更新时间排序功能。",
+  // 建议使用 poster 类型显示
   modules: [
     {
       title: "豆瓣片单 Pro",
       requiresWebView: false,
-      functionName: "loadDoubanInterestPro",
-      cacheDuration: 3600, // 缓存1小时
+      functionName: "loadDoubanSync",
+      type: "list", 
+      cacheDuration: 3600,
       params: [
         {
           name: "user_id",
           title: "豆瓣 ID (必填)",
           type: "input",
-          description: "数字ID或个性域名ID",
+          description: "数字ID或个性域名ID (如: 1234567)",
         },
         {
           name: "status",
@@ -36,8 +39,8 @@ WidgetMetadata = {
           defaultValue: "default",
           enumOptions: [
             { title: "📌 默认 (豆瓣原序)", value: "default" },
-            { title: "📅 按最新更新 (追剧)", value: "update" },
-            { title: "🆕 按首播/上映时间", value: "release" }
+            { title: "📅 按更新时间 (追更)", value: "update" }, // 适合“在看”
+            { title: "🆕 按上映年份", value: "release" }
           ]
         },
         {
@@ -51,48 +54,54 @@ WidgetMetadata = {
 };
 
 // ==========================================
-// 常量定义 (模仿原脚本的 Headers)
+// 1. 核心抓取逻辑 (严格复刻原版)
 // ==========================================
+
+// 严格使用原脚本的 Header，防止 403 Forbidden
 const DOUBAN_HEADERS = {
   "Referer": "https://m.douban.com/movie",
   "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 };
 
-// ==========================================
-// 主逻辑函数
-// ==========================================
-async function loadDoubanInterestPro(params) {
+async function loadDoubanSync(params) {
   const { user_id, status = "mark", sort_mode = "default", page = 1 } = params;
 
   if (!user_id) {
-    return [{ title: "请填写豆瓣ID", subTitle: "点击组件配置进行填写", type: "text" }];
+    return [{ title: "请配置豆瓣ID", subTitle: "点击组件右上角编辑参数", type: "text" }];
   }
 
-  // 1. 请求豆瓣接口 (核心逻辑复刻)
-  // 豆瓣分页通常是 count=15 或 20
+  // --- Step 1: 构造 URL (完全模仿原逻辑) ---
   const count = 15;
   const start = (page - 1) * count;
+  // 关键：for_mobile=1 和 ck= 参数必须保留
   const url = `https://m.douban.com/rexxar/api/v2/user/${user_id}/interests?type=${status}&count=${count}&order_by=time&start=${start}&ck=&for_mobile=1`;
 
   try {
+    // --- Step 2: 发起请求 ---
+    console.log(`正在请求豆瓣: ${url}`);
     const res = await Widget.http.get(url, { headers: DOUBAN_HEADERS });
-    const data = JSON.parse(res.body || res.data);
-
-    // 错误处理
-    if (data.msg === "user_not_found" || data.code === 1001) {
-        return [{ title: "用户不存在", subTitle: "请检查豆瓣ID是否正确", type: "text" }];
-    }
     
-    const interests = data.interests || [];
-    if (interests.length === 0) {
-      return [{ title: "列表为空", subTitle: "没有获取到更多数据", type: "text" }];
+    // 解析数据 (兼容 body 和 data)
+    let data = null;
+    if (typeof res.body === 'string') {
+        data = JSON.parse(res.body);
+    } else if (typeof res.data === 'object') {
+        data = res.data;
+    } else if (typeof res.data === 'string') {
+        data = JSON.parse(res.data);
     }
 
-    // 2. 数据初步格式化
+    // 错误检查
+    if (!data) throw new Error("返回数据为空");
+    if (data.msg === "user_not_found") return [{ title: "用户不存在", subTitle: "请检查ID是否正确", type: "text" }];
+    if (data.interests && data.interests.length === 0) return [{ title: "列表为空", subTitle: "没有更多数据了", type: "text" }];
+
+    // --- Step 3: 数据清洗 ---
+    const interests = data.interests || [];
     let items = interests.map(i => {
       const subject = i.subject || {};
       const isMovie = subject.type === "movie";
-      // 优先获取高清封面
+      // 封面图处理：优先取 large
       const poster = subject.pic?.large || subject.pic?.normal || subject.cover_url || "";
       
       return {
@@ -102,142 +111,147 @@ async function loadDoubanInterestPro(params) {
         year: subject.year,
         pic: poster,
         rating: subject.rating?.value || "0.0",
-        type: isMovie ? "movie" : "tv", // 统一类型
+        type: isMovie ? "movie" : "tv",
         comment: i.comment,
-        // 默认排序字段初始化
-        sortDate: "1900-01-01" 
+        create_time: i.create_time, // 豆瓣标记时间
+        
+        // 初始化排序字段
+        sortDate: "1900-01-01", 
+        displayTime: "" 
       };
     });
 
-    // 3. 如果需要特殊排序，进行数据增强 (查询 TMDB)
+    // --- Step 4: 高级排序 (如需) ---
     if (sort_mode !== "default") {
-      items = await enrichItemsWithTime(items, sort_mode);
-      
-      // 执行本地排序
-      if (sort_mode === "update") {
-        // 倒序：最近更新的在上面
-        items.sort((a, b) => {
-            if (a.sortDate === b.sortDate) return 0;
-            return a.sortDate < b.sortDate ? 1 : -1;
-        });
-      } else if (sort_mode === "release") {
-        // 倒序：最近上映的在上面
-        items.sort((a, b) => {
-            if (a.sortDate === b.sortDate) return 0;
-            return a.sortDate < b.sortDate ? 1 : -1;
-        });
-      }
+      // 如果不是默认排序，去查 TMDB 时间
+      items = await enrichAndTimeSort(items, sort_mode);
     }
 
-    // 4. 构建最终卡片
+    // --- Step 5: 输出 ---
     return items.map(item => buildCard(item, sort_mode));
 
   } catch (e) {
     console.error(e);
-    return [{ title: "请求出错", subTitle: "网络错误或API受限", type: "text" }];
+    return [{ title: "请求失败", subTitle: e.message || "网络或API错误", type: "text" }];
   }
 }
 
 // ==========================================
-// 数据增强：去 TMDB 查具体时间
+// 2. 时间查询与排序 (增强部分)
 // ==========================================
-async function enrichItemsWithTime(items, sortMode) {
-  // 使用 Promise.all 并发请求，速度更快
-  const tasks = items.map(async (item) => {
-    try {
-      // A. 搜索对应条目 (使用中文搜索)
-      const searchRes = await Widget.tmdb.search(item.title, item.type, { language: "zh-CN" });
-      const results = searchRes.results || [];
-      
-      let match = null;
-      if (results.length > 0) {
-        // 简单的年份校对，防止搜错
-        const targetYear = parseInt(item.year);
-        match = results.find(r => {
-          const rDate = r.first_air_date || r.release_date || "0000";
-          const rYear = parseInt(rDate.substring(0, 4));
-          return Math.abs(rYear - targetYear) <= 2; // 允许2年误差
-        });
-        if (!match) match = results[0]; // 没匹配到年份就取第一个
-      }
 
-      if (match) {
-        item.tmdbId = match.id; // 存入 TMDB ID
-
-        if (item.type === "tv") {
-            // 如果是剧集，需要查详情获取“下一集”或“最后一集”
-            const detail = await Widget.tmdb.get(`/tv/${match.id}`, { params: { language: "zh-CN" } });
+async function enrichAndTimeSort(items, sortMode) {
+    // 1. 并发查询 TMDB 信息
+    const tasks = items.map(async (item) => {
+        try {
+            // A. 搜索 (用中文标题搜 TMDB)
+            const searchRes = await Widget.tmdb.search(item.title, item.type, { language: "zh-CN" });
+            const results = searchRes.results || [];
             
-            if (sortMode === "update") {
-                // 优先找下一集，没有则找上一集
-                const ep = detail.next_episode_to_air || detail.last_episode_to_air;
-                if (ep) {
-                   item.sortDate = ep.air_date;
-                   const isNext = !!detail.next_episode_to_air;
-                   item.displayTime = `${isNext ? '🔜' : '🔥'} ${formatDate(ep.air_date)} S${ep.season_number}E${ep.episode_number}`;
-                } else {
-                   item.sortDate = detail.first_air_date || "1900-01-01";
-                   item.displayTime = `${formatDate(item.sortDate)} 首播`;
-                }
-            } else {
-                // 按首播时间
-                item.sortDate = detail.first_air_date || "1900-01-01";
-                item.displayTime = `📅 ${item.sortDate}`;
+            // B. 匹配年份 (防止同名)
+            let match = null;
+            if (results.length > 0) {
+                const targetYear = parseInt(item.year);
+                match = results.find(r => {
+                    const rDate = r.first_air_date || r.release_date || "0000";
+                    const rYear = parseInt(rDate.substring(0, 4));
+                    return Math.abs(rYear - targetYear) <= 2; // 允许误差
+                });
+                if (!match) match = results[0];
             }
-        } else {
-            // 电影
-            item.sortDate = match.release_date || "1900-01-01";
-            item.displayTime = `🎬 ${item.sortDate} 上映`;
-        }
-      }
-    } catch (e) {
-      // 单个失败不影响整体
-      console.log(`Search failed for ${item.title}`);
-    }
-    return item;
-  });
 
-  return await Promise.all(tasks);
+            if (match) {
+                item.tmdbId = match.id;
+                
+                // C. 获取具体日期
+                if (item.type === "tv") {
+                    // 剧集：查详情看下集/上集
+                    const detail = await Widget.tmdb.get(`/tv/${match.id}`, { params: { language: "zh-CN" } });
+                    
+                    if (sortMode === "update") {
+                        // 追更模式：优先看 Next Episode
+                        const nextEp = detail.next_episode_to_air;
+                        const lastEp = detail.last_episode_to_air;
+                        
+                        if (nextEp) {
+                            item.sortDate = nextEp.air_date;
+                            item.displayTime = `🔜 ${formatDate(nextEp.air_date)} S${nextEp.season_number}E${nextEp.episode_number}`;
+                        } else if (lastEp) {
+                            item.sortDate = lastEp.air_date;
+                            item.displayTime = `🔥 ${formatDate(lastEp.air_date)} S${lastEp.season_number}E${lastEp.episode_number}`;
+                        } else {
+                            item.sortDate = detail.first_air_date || "1900-01-01";
+                            item.displayTime = `${formatDate(item.sortDate)} 首播`;
+                        }
+                    } else {
+                        // 默认按首播
+                        item.sortDate = detail.first_air_date || "1900-01-01";
+                        item.displayTime = `📅 ${item.year}`;
+                    }
+                } else {
+                    // 电影
+                    item.sortDate = match.release_date || "1900-01-01";
+                    item.displayTime = `🎬 ${formatDate(item.sortDate)}`;
+                }
+            }
+        } catch(e) { console.log("Search error: " + item.title); }
+        
+        return item;
+    });
+
+    // 等待所有查询完成
+    const enrichedItems = await Promise.all(tasks);
+
+    // 2. 执行本地排序
+    enrichedItems.sort((a, b) => {
+        // 简单日期字符串比较 "2024-02-01" vs "2024-01-01"
+        if (a.sortDate === b.sortDate) return 0;
+        // 倒序：时间晚（新）的在前面
+        return a.sortDate < b.sortDate ? 1 : -1;
+    });
+
+    return enrichedItems;
 }
 
 // ==========================================
-// 工具与 UI
+// 3. UI 构建
 // ==========================================
 
 function buildCard(item, sortMode) {
-  let subTitle = "";
-  let genreTitle = "";
+    let subTitle = "";
+    let genreTitle = "";
 
-  if (sortMode !== "default" && item.displayTime) {
-      // 如果有增强的时间数据
-      subTitle = item.displayTime;
-      genreTitle = item.year + "";
-  } else {
-      // 默认显示逻辑
-      subTitle = item.rating > 0 ? `评分: ${item.rating}` : (item.original_title || "暂无评分");
-      if (item.comment) subTitle = `💬 ${item.comment}`; // 有短评显示短评
-      genreTitle = item.year + "";
-  }
+    if (sortMode !== "default" && item.displayTime) {
+        // 排序模式下，显示时间
+        subTitle = item.displayTime;
+        genreTitle = item.rating > 0 ? `${item.rating}` : item.year;
+    } else {
+        // 默认模式
+        subTitle = item.original_title || "";
+        if (item.comment) subTitle = `💬 ${item.comment}`; // 有短评显示短评
+        genreTitle = item.rating > 0 ? `${item.rating}分` : item.year;
+    }
 
-  return {
-    id: `db_pro_${item.doubanId}`,
-    // 赋予 TMDB ID，点击后可联动其他资源
-    tmdbId: item.tmdbId || null,
-    type: "tmdb",
-    mediaType: item.type,
-    
-    title: item.title,
-    subTitle: subTitle,
-    genreTitle: genreTitle,
-    
-    posterPath: item.pic,
-    description: item.original_title || "",
-    // 如果没找到 TMDB ID，点击跳转网页
-    url: `https://m.douban.com/${item.type}/${item.doubanId}/` 
-  };
+    return {
+        id: `db_${item.doubanId}`,
+        // 传入 tmdbId 以支持 App 内的资源搜索/跳转
+        tmdbId: item.tmdbId || null,
+        type: "tmdb",
+        mediaType: item.type,
+        
+        title: item.title,
+        subTitle: subTitle,
+        genreTitle: String(genreTitle),
+        
+        posterPath: item.pic,
+        description: item.original_title || "暂无描述",
+        // 兜底链接
+        url: `https://m.douban.com/${item.type}/${item.doubanId}/`
+    };
 }
 
-function formatDate(str) {
-    if (!str) return "";
-    return str.substring(5); // 2024-05-20 -> 05-20
+// 辅助：日期格式化 (2024-05-01 -> 05-01)
+function formatDate(dateStr) {
+    if (!dateStr) return "";
+    return dateStr.substring(5);
 }
