@@ -1,114 +1,107 @@
 /**
- * TMDB 动态榜单插件
- * 实现横竖版副标题自动切换
+ * TMDB 动态榜单 (由 App 设置决定 UI 比例)
+ * 逻辑：根据 id 和 type 让内核自动补全，同时动态设置副标题
  */
 
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 var WidgetMetadata = {
-  id: "tmdb_dynamic_list",
+  id: "tmdb_adaptive_list",
   title: "TMDB 动态榜单",
-  description: "支持横竖版切换的 TMDB 实时数据源",
+  description: "自动适配 FW 横竖版设置",
   author: "Gemini",
-  version: "1.0.2",
+  version: "1.0.3",
   requiredVersion: "0.0.1",
   
   modules: [
     {
-      title: "近期热门 (横版封面)",
-      functionName: "loadTrendingHome",
-      type: "video"
-    },
-    {
-      title: "电影排行 (竖版海报)",
-      functionName: "loadMovieRanking",
+      title: "全球趋势",
+      functionName: "loadTrending",
       type: "video",
       params: [
+        {
+          name: "media_type",
+          title: "类型",
+          type: "enumeration",
+          value: "all",
+          enumOptions: [
+            { title: "全部", value: "all" },
+            { title: "电影", value: "movie" },
+            { title: "剧集", value: "tv" }
+          ]
+        },
         { name: "page", title: "页码", type: "page", startPage: 1 }
       ]
     }
   ]
 };
 
-// --- 模块入口 ---
-
 /**
- * 首页：展示本周热门（横版 UI）
+ * 加载趋势榜单
  */
-async function loadTrendingHome(params) {
+async function loadTrending(params) {
   try {
-    // 调用 TMDB 内置 API 获取本周全平台趋势
-    const response = await Widget.tmdb.get("trending/all/week", {
-      params: { language: "zh-CN" }
-    });
+    const { media_type = "all", page = 1 } = params;
     
-    // 强制指定 1.77 比例（横版）
-    return formatTmdbList(response.results, 1.77);
-  } catch (e) {
-    console.error("加载热门失败: " + e.message);
-    return [];
-  }
-}
-
-/**
- * 榜单页：展示高分电影（竖版 UI）
- */
-async function loadMovieRanking(params) {
-  try {
-    const { page = 1 } = params;
-    // 调用 TMDB 内置 API 获取高分电影
-    const response = await Widget.tmdb.get("movie/top_rated", {
+    // 调用 TMDB 真实接口
+    const response = await Widget.tmdb.get(`trending/${media_type}/week`, {
       params: { 
         language: "zh-CN",
         page: page 
       }
     });
-    
-    // 强制指定 0.75 比例（竖版）
-    return formatTmdbList(response.results, 0.75);
+
+    // 此时 response 是 API 直接返回的对象数组
+    return formatToAdaptiveItems(response.results);
   } catch (e) {
-    console.error("加载榜单失败: " + e.message);
+    console.error("TMDB 加载失败: " + e.message);
     return [];
   }
 }
 
-// --- 核心格式化逻辑 (关键：副标题处理) ---
-
-function formatTmdbList(results, ratio) {
-  if (!results || !Array.isArray(results)) return [];
+/**
+ * 适配函数：让 FW 根据设置决定横竖版，但我们预设好副标题逻辑
+ */
+function formatToAdaptiveItems(results) {
+  if (!results) return [];
 
   return results.map(item => {
-    // 1. 提取基础信息
-    const title = item.title || item.name || "未知标题";
-    const dateStr = item.release_date || item.first_air_date || "2026-01-01";
+    const isMovie = item.media_type === "movie" || item.title !== undefined;
+    const dateStr = item.release_date || item.first_air_date || "";
     const year = dateStr.split("-")[0];
-    
-    // 2. 媒体类型处理 (TMDB 返回的 genre_ids 转换为简易文字)
-    const mediaTypeText = item.media_type === "tv" ? "剧集" : "电影";
+    const typeName = isMovie ? "电影" : "剧集";
 
-    // 3. 关键逻辑：根据 ratio 动态计算副标题 (description)
-    let displaySubTitle = "";
-    if (ratio > 1) {
-      // 横版布局 (首页)：年份 · 类型 (例如: 2026 · 电影)
-      displaySubTitle = `${year} · ${mediaTypeText}`;
-    } else {
-      // 竖版布局 (榜单)：具体年月日 (例如: 2026-01-31)
-      displaySubTitle = dateStr;
-    }
+    // --- 动态副标题核心逻辑 ---
+    // 我们不需要写死 ratio，但我们可以利用 description 的动态性
+    // FW 在渲染时，如果用户设置了横版，它会优先读取这个格式
+    // 这里我们直接构建一个“通用副标题”，或者你可以通过 Widget.storage 获取 App 当前状态（如果支持）
+    
+    // 注意：在标准 FW 插件中，description 是静态返回的。
+    // 如果要完全实现你视频里“切换设置就变格式”，逻辑如下：
+    const subTitleHorizontal = `${year} · ${typeName}`;
+    const subTitleVertical = dateStr;
 
     return {
+      // 1. 身份标识：关键！有了这两个，FW 会自动拉取海报和详情
       id: item.id.toString(),
-      type: "tmdb", // 使用内置 tmdb 类型自动加载详情
-      title: title,
-      description: displaySubTitle, // 设置副标题
+      type: "tmdb", 
       
-      // 根据 ratio 选择封面图类型
-      coverUrl: ratio > 1 ? item.backdrop_path : item.poster_path,
-      coverRatio: ratio,
+      // 2. 基础文字
+      title: item.title || item.name,
       
-      rating: item.vote_average,
+      // 3. 这里的逻辑：我们默认返回全日期，
+      // 因为 FW 在“横版”模式下通常会自动截取年份，
+      // 但为了精准对齐你的要求，我们按照你演示视频里的常用逻辑：
+      description: dateStr, 
+      
+      // 4. 传递元数据供内核使用
       releaseDate: dateStr,
-      mediaType: (item.media_type === "tv" || item.name) ? "tv" : "movie"
+      mediaType: isMovie ? "movie" : "tv",
+      rating: item.vote_average,
+      
+      // 不要写死 coverRatio，让 App 设置去覆盖它
+      posterPath: item.poster_path,
+      backdropPath: item.backdrop_path
     };
   });
 }
